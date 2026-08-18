@@ -1,0 +1,153 @@
+plugins {
+    // 1.17.x is required for Fabric API 0.14x: older Loom rejects the javadoc namespace those
+    // jars ship with ("must be have an intermediary source namespace").
+    id 'fabric-loom' version '1.17.19'
+    id 'java'
+}
+
+// ---------------------------------------------------------------------------
+// Multi-version build
+//
+//   ./gradlew build                       -> 1.21.4 (default)
+//   ./gradlew -PmcVersion=1.21.8  build
+//   ./gradlew -PmcVersion=1.21.11 build
+//   ./build-all.sh                        -> all three in sequence
+//
+// 1.21.5 rewrote ClickEvent/HoverEvent from classes into sealed interfaces, which is the only
+// API break this mod actually hits. Rather than pulling in Stonecutter for two constructor
+// calls, each target picks a `compat` source directory holding its own TextCompat.
+// ---------------------------------------------------------------------------
+def TARGETS = [
+        '1.21.4' : [
+                yarn   : '1.21.4+build.8',
+                loader : '0.16.14',
+                fapi   : '0.119.3+1.21.4',
+                cloth  : '17.0.144',
+                modmenu: '13.0.4',
+                compat : 'v1_21_4',
+                depends: '>=1.21.2 <1.21.5',
+        ],
+        '1.21.8' : [
+                yarn   : '1.21.8+build.1',
+                loader : '0.19.3',
+                fapi   : '0.136.1+1.21.8',
+                cloth  : '19.0.147',
+                modmenu: '15.0.2',
+                compat : 'v1_21_5',
+                depends: '>=1.21.5 <1.21.9',
+        ],
+        '1.21.11': [
+                yarn   : '1.21.11+build.6',
+                loader : '0.19.3',
+                fapi   : '0.141.6+1.21.11',
+                cloth  : '21.11.153',
+                modmenu: '17.0.1-beta.1',
+                compat : 'v1_21_5',
+                depends: '>=1.21.9 <1.22',
+        ],
+]
+
+def mcVersion = (project.findProperty('mcVersion') ?: '1.21.4').toString()
+def target = TARGETS[mcVersion]
+if (target == null) {
+    throw new GradleException("未知的 mcVersion '${mcVersion}'，可选：${TARGETS.keySet().join(', ')}")
+}
+logger.lifecycle("CE Stats: 目标 Minecraft ${mcVersion} (compat=${target.compat})")
+
+version = "${project.mod_version}+mc${mcVersion}"
+group = project.maven_group
+
+// Keep each target's outputs apart so switching versions does not force a full recompile.
+layout.buildDirectory = file("build/${mcVersion}")
+
+base {
+    archivesName = "${project.archives_base_name}-mc${mcVersion}"
+}
+
+sourceSets {
+    main {
+        java.srcDir "src/compat/${target.compat}/java"
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'Cloth Config'
+        url = uri('https://maven.shedaniel.me/')
+    }
+    maven {
+        name = 'Mod Menu'
+        url = uri('https://maven.terraformersmc.com/releases/')
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${mcVersion}"
+    mappings "net.fabricmc:yarn:${target.yarn}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${target.loader}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${target.fapi}"
+
+    // Bundled into our jar, so the settings screen works without the player installing anything.
+    modImplementation("me.shedaniel.cloth:cloth-config-fabric:${target.cloth}") {
+        exclude(group: 'net.fabricmc.fabric-api')
+    }
+    include("me.shedaniel.cloth:cloth-config-fabric:${target.cloth}")
+
+    // Compile-only: the "modmenu" entrypoint is simply never invoked when Mod Menu is absent.
+    modCompileOnly("com.terraformersmc:modmenu:${target.modmenu}") {
+        exclude(group: 'net.fabricmc.fabric-api')
+    }
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'minecraft_dependency', target.depends
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version, 'minecraft_dependency': target.depends
+    }
+}
+
+// The parser matches on literal '☠' and Chinese text, so the platform default encoding
+// (GBK on this machine) would silently corrupt every pattern.
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = 'UTF-8'
+    it.options.release = 21
+}
+
+java {
+    withSourcesJar()
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat = 'full'
+    }
+}
+
+/** Prints the mod id of every jar-in-jar dependency, to confirm what actually got bundled. */
+tasks.register('listNestedJars') {
+    group = 'verification'
+    dependsOn tasks.named('remapJar')
+    doLast {
+        def jar = tasks.named('remapJar').get().archiveFile.get().asFile
+        def zip = new java.util.zip.ZipFile(jar)
+        try {
+            zip.entries().findAll { it.name.startsWith('META-INF/jars/') && it.name.endsWith('.jar') }
+                    .each { entry ->
+                        logger.lifecycle("  ${entry.name}  (${(entry.size / 1024) as int} KB)")
+                    }
+        } finally {
+            zip.close()
+        }
+    }
+}

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "cestats",
+  "version": "${version}",
+  "name": "CE Stats",
+  "description": "把仿 CS2 团队爆破服务器的赛后播报解析成对局数据，并上报到自建统计站点。",
+  "authors": [
+    "diexuefeiwu"
+  ],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.cestats.CeStatsClient"
+    ],
+    "modmenu": [
+      "com.cestats.compat.CeStatsModMenu"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_dependency}",
+    "java": ">=21"
+  },
+  "suggests": {
+    "modmenu": "*"
+  }
+}
