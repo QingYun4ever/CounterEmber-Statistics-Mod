@@ -53,12 +53,12 @@ public final class CeStatsConfigScreen {
 
         ConfigCategory server = builder.getOrCreateCategory(Text.literal("服务器"));
         server.addEntry(entries.startStrField(Text.literal("接口地址"), config.apiBaseUrl)
-                .setDefaultValue("http://127.0.0.1:3100")
+                .setDefaultValue(CeStatsConfig.DEFAULT_BASE_URL)
                 .setTooltip(Text.literal("统计站点的根地址，比赛会 POST 到 <地址>/api/ingest"))
                 .setSaveConsumer(value -> config.apiBaseUrl = value.trim())
                 .build());
         server.addEntry(entries.startStrField(Text.literal("网页地址"), config.webBaseUrl)
-                .setDefaultValue("http://127.0.0.1:3100")
+                .setDefaultValue(CeStatsConfig.DEFAULT_BASE_URL)
                 .setTooltip(Text.literal("聊天里「查看详情」打开的地址，通常和接口地址相同"))
                 .setSaveConsumer(value -> config.webBaseUrl = value.trim())
                 .build());

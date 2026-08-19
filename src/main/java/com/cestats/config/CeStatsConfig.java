@@ -17,16 +17,17 @@ public final class CeStatsConfig {
 
     private static final Logger LOG = LoggerFactory.getLogger("cestats");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    public static final String DEFAULT_BASE_URL = "https://ce.qingyun.best";
 
     public boolean enabled = true;
     public boolean uploadEnabled = true;
     public boolean notifyOnMatchEnd = true;
 
     /** Where /api/ingest lives. */
-    public String apiBaseUrl = "http://127.0.0.1:3100";
+    public String apiBaseUrl = DEFAULT_BASE_URL;
     public String apiKey = "dev-key";
     /** Where the human-facing site lives; usually the same host. */
-    public String webBaseUrl = "http://127.0.0.1:3100";
+    public String webBaseUrl = DEFAULT_BASE_URL;
 
     private transient Path path;
 
