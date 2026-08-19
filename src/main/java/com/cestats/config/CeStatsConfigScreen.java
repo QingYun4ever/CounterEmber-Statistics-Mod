@@ -5,6 +5,8 @@ import com.cestats.ping.PingDemo;
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
 import me.shedaniel.clothconfig2.api.ConfigCategory;
 import me.shedaniel.clothconfig2.api.ConfigEntryBuilder;
+import me.shedaniel.clothconfig2.api.Requirement;
+import me.shedaniel.clothconfig2.gui.entries.BooleanListEntry;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 
@@ -56,19 +58,34 @@ public final class CeStatsConfigScreen {
                 .setTooltip(Text.literal("比赛结算后在聊天框显示本场数据和查看链接"))
                 .setSaveConsumer(value -> config.notifyOnMatchEnd = value)
                 .build());
+
+        // Built first and kept, so the three ping sub-options below can be greyed out while the
+        // feature is off — a switch that does nothing is worse than a switch that looks disabled.
+        BooleanListEntry pingMarker = entries.startBooleanToggle(Text.literal("标点功能"),
+                        config.pingMarkerEnabled)
+                .setDefaultValue(false)
+                .setTooltip(Text.literal("中键（原版“选取方块”键）标点，发光菱形穿墙可见"),
+                        Text.literal("默认关闭：开启后中键会被标点接管，创造模式的「选取方块」将不再触发"))
+                .setSaveConsumer(value -> config.pingMarkerEnabled = value)
+                .build();
+        general.addEntry(pingMarker);
         general.addEntry(entries.startBooleanToggle(Text.literal("队伍标点同步"), config.pingEnabled)
                 .setDefaultValue(true)
-                .setTooltip(Text.literal("通过统计站点的短时中继，让同局同队的客户端看到标点；不写入比赛数据库"))
+                .setTooltip(Text.literal("通过统计站点的短时中继，让同局同队的客户端看到标点；不写入比赛数据库"),
+                        Text.literal("关闭后标点只有自己能看到"))
+                .setRequirement(Requirement.isTrue(pingMarker))
                 .setSaveConsumer(value -> config.pingEnabled = value)
                 .build());
         general.addEntry(entries.startBooleanToggle(Text.literal("自动识别标点频道"), config.pingAutoJoin)
                 .setDefaultValue(true)
                 .setTooltip(Text.literal("使用可见玩家列表和首次观测到的队伍；识别不到时可用 /cestats ping join 六位码"))
+                .setRequirement(Requirement.isTrue(pingMarker))
                 .setSaveConsumer(value -> config.pingAutoJoin = value)
                 .build());
         general.addEntry(entries.startBooleanToggle(Text.literal("标点调试输出"), config.pingDebug)
                 .setDefaultValue(false)
                 .setTooltip(Text.literal("每次标点在聊天里显示一行：绿色表示中继已确认，红色写明失败原因；排查同步问题用"))
+                .setRequirement(Requirement.isTrue(pingMarker))
                 .setSaveConsumer(value -> config.pingDebug = value)
                 .build());
         general.addEntry(entries.startBooleanToggle(Text.literal("Flashback 自动录制"), config.flashbackAutoRecord)

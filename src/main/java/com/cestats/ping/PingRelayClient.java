@@ -90,7 +90,7 @@ public final class PingRelayClient {
     }
 
     public void tick(MinecraftClient client) {
-        if (!running || !config.enabled || !config.pingEnabled || !config.isPaired()) {
+        if (!running || !config.pingRelayAllowed() || !config.isPaired()) {
             if (joined || joining) reset();
             return;
         }
@@ -137,7 +137,7 @@ public final class PingRelayClient {
     /** Everything {@code /cestats ping} needs to tell "working" apart from "silently doing nothing". */
     public Status status() {
         Phase phase;
-        if (!running || !config.enabled || !config.pingEnabled) {
+        if (!running || !config.pingRelayAllowed()) {
             phase = Phase.DISABLED;
         } else if (!config.isPaired()) {
             phase = Phase.UNPAIRED;

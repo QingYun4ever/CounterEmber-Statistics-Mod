@@ -23,7 +23,25 @@ public final class CeStatsConfig {
     public boolean enabled = true;
     public boolean uploadEnabled = true;
     public boolean notifyOnMatchEnd = true;
-    /** Enable the optional client-to-site team ping relay. */
+    /**
+     * Master switch for the whole ping feature: middle-click placing and marker rendering.
+     *
+     * <p>Off by default. Enabling it takes over the vanilla "pick block" key, which is not something
+     * to do behind the back of somebody who installed this mod for match uploads — so it is an
+     * explicit opt-in in the Mod Menu screen.</p>
+     *
+     * <p>Deliberately a separate field from {@link #pingEnabled} rather than a change of that field's
+     * meaning: {@code pingEnabled} defaulted to true and {@link #load} writes every field back, so
+     * every existing {@code cestats.json} already has {@code "pingEnabled": true} on disk. Reusing it
+     * would silently opt in every current installation, which is the opposite of the intent. A field
+     * absent from an older file keeps the initializer below, so those installations get the new
+     * default too.</p>
+     */
+    public boolean pingMarkerEnabled = false;
+    /**
+     * Enable the optional client-to-site team ping relay. Only consulted while
+     * {@link #pingMarkerEnabled} is on; with it off, markers are placed and drawn locally only.
+     */
     public boolean pingEnabled = true;
     /** Automatically use the visible roster and first observed side for relay channel discovery. */
     public boolean pingAutoJoin = true;
@@ -107,6 +125,15 @@ public final class CeStatsConfig {
 
     public boolean isPaired() {
         return deviceToken != null && !deviceToken.isBlank();
+    }
+
+    /**
+     * Whether the ping relay is allowed to run at all — stats on, ping feature on, relay sub-switch
+     * on. Pairing is checked separately, because "not paired yet" is worth reporting differently from
+     * "switched off".
+     */
+    public boolean pingRelayAllowed() {
+        return enabled && pingMarkerEnabled && pingEnabled;
     }
 
     public void clearPairing() {

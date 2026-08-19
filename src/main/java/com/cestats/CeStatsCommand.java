@@ -114,6 +114,14 @@ public final class CeStatsCommand {
 
     private static int pingStatus(CommandContext<FabricClientCommandSource> ctx) {
         FabricClientCommandSource source = ctx.getSource();
+        if (!CeStatsClient.config().pingMarkerEnabled) {
+            // Nothing below this is meaningful with the feature off, and the one thing the player
+            // needs is where the switch lives.
+            source.sendFeedback(head("标点功能已关闭"));
+            source.sendFeedback(row("开启方式", "Mod Menu → CE Stats → 常规 → 标点功能"));
+            source.sendFeedback(row("说明", "开启后中键（原版“选取方块”键）标点，队伍同步另有开关"));
+            return 1;
+        }
         source.sendFeedback(head("标点中继 " + pingStatusText()));
         String code = CeStatsClient.config().pingTeamCode;
         if (code != null && !code.isBlank()) {
@@ -152,6 +160,9 @@ public final class CeStatsCommand {
         ctx.getSource().sendFeedback(head(config.pingDebug
                 ? "已开启标点调试输出：每次标点都会在聊天里显示是否同步成功"
                 : "已关闭标点调试输出"));
+        if (config.pingDebug && !config.pingMarkerEnabled) {
+            ctx.getSource().sendFeedback(row("提示", "标点功能当前关闭，需要先在 Mod Menu 里开启才会有输出"));
+        }
         return 1;
     }
 

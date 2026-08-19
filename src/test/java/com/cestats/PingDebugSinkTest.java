@@ -24,6 +24,10 @@ class PingDebugSinkTest {
     private static CeStatsConfig config(boolean debug) {
         CeStatsConfig config = new CeStatsConfig();
         config.enabled = true;
+        // Both switches: pingMarkerEnabled is the feature itself and defaults to off, pingEnabled is
+        // the relay sub-switch. With the master off the relay reports DISABLED and never gets as far
+        // as the reasons these tests are about.
+        config.pingMarkerEnabled = true;
         config.pingEnabled = true;
         config.pingDebug = debug;
         config.deviceToken = "x".repeat(43);

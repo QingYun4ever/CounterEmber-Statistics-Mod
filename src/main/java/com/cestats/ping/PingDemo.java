@@ -27,10 +27,11 @@ import net.minecraft.world.RaycastContext;
  * CS2-style client marker demo with an optional, short-lived team relay.
  *
  * <p>It uses the vanilla pick-item binding (middle mouse by default), so a click is consumed at
- * the start of the client tick before vanilla creative pick-block handling. The target is a
- * straight 64-block ray, with a three-marker cap and a short cooldown. Rendering remains local
- * (see {@link PingMarkerRenderer}); the optional relay only forwards quantized coordinates and
- * expiry metadata.</p>
+ * the start of the client tick before vanilla creative pick-block handling. Because of exactly that,
+ * the whole feature is off until it is switched on in Mod Menu ({@link CeStatsConfig#pingMarkerEnabled});
+ * while off, nothing here touches the key. The target is a straight 64-block ray, with a
+ * three-marker cap and a short cooldown. Rendering remains local (see {@link PingMarkerRenderer});
+ * the optional relay only forwards quantized coordinates and expiry metadata.</p>
  */
 public final class PingDemo {
 
@@ -86,9 +87,21 @@ public final class PingDemo {
     private static void onClientTick(MinecraftClient client) {
         long now = System.currentTimeMillis();
         if (RELAY != null) {
+            // Called even while the feature is off: the relay checks the same switches itself and
+            // uses this tick to leave its channel and stop its poller.
             RELAY.tick(client);
             applyRemoteSnapshot(client, RELAY.consumeSnapshot(), now);
         }
+
+        if (!markersEnabled()) {
+            // Deliberately no pickItemKey drain on this path. While the feature is off the middle
+            // click has to reach vanilla's own pick-block handling later in this same tick.
+            if (!ACTIVE_PINGS.isEmpty() || !REMOTE_PINGS.isEmpty()) {
+                resetLocal();
+            }
+            return;
+        }
+
         commitExpiredNormal(now);
         // Expiry runs before the click is read, so an expired marker neither occupies a slot against
         // the cap nor gets resurrected into a warning by a double click.
@@ -112,6 +125,14 @@ public final class PingDemo {
     }
 
     /**
+     * The one gate for the whole feature. Off by default; see
+     * {@link CeStatsConfig#pingMarkerEnabled} for why enabling it has to be a deliberate act.
+     */
+    private static boolean markersEnabled() {
+        return CONFIG != null && CONFIG.enabled && CONFIG.pingMarkerEnabled;
+    }
+
+    /**
      * Hands the world renderer everything that should be on screen right now, local markers first.
      *
      * <p>The client tick and the world render run on the same thread, so this is not a safety copy —
@@ -119,6 +140,9 @@ public final class PingDemo {
      * allocating one per frame.</p>
      */
     static void collectMarkers(List<PingMarker> out) {
+        if (!markersEnabled()) {
+            return;
+        }
         out.addAll(ACTIVE_PINGS);
         out.addAll(REMOTE_PINGS.values());
     }
