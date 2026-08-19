@@ -39,6 +39,8 @@ public final class PairingClient {
             request = HttpRequest.newBuilder(URI.create(config.pairUrl()))
                     .timeout(Duration.ofSeconds(20))
                     .header("content-type", "application/json")
+                    .header("accept", "application/json")
+                    .header("user-agent", "cestats/0.2 (Minecraft client)")
                     .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
                     .build();
         } catch (IllegalArgumentException e) {

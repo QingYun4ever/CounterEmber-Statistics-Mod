@@ -127,6 +127,8 @@ public final class Uploader {
             HttpRequest request = HttpRequest.newBuilder(URI.create(config.ingestUrl()))
                     .timeout(Duration.ofSeconds(20))
                     .header("content-type", "application/json")
+                    .header("accept", "application/json")
+                    .header("user-agent", "cestats/0.2 (Minecraft client)")
                     .header("authorization", "Bearer " + config.deviceToken)
                     .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
                     .build();

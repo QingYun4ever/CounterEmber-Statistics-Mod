@@ -329,6 +329,8 @@ public final class PingRelayClient {
         return HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(25))
                 .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .header("user-agent", "cestats/0.2 (Minecraft client)")
                 .header("authorization", "Bearer " + config.deviceToken);
     }
 
