@@ -4,6 +4,7 @@ import com.cestats.compat.TextCompat;
 import com.cestats.config.CeStatsConfig;
 import com.cestats.net.PairingClient;
 import com.cestats.ping.PingDemo;
+import com.cestats.ping.PingRelayClient;
 import com.mojang.brigadier.arguments.StringArgumentType;
 
 import java.util.concurrent.ThreadLocalRandom;
@@ -102,12 +103,31 @@ public final class CeStatsCommand {
     }
 
     private static int pingStatus(CommandContext<FabricClientCommandSource> ctx) {
-        ctx.getSource().sendFeedback(head("标点中继 " + pingStatusText()));
+        FabricClientCommandSource source = ctx.getSource();
+        source.sendFeedback(head("标点中继 " + pingStatusText()));
         String code = CeStatsClient.config().pingTeamCode;
         if (code != null && !code.isBlank()) {
-            ctx.getSource().sendFeedback(row("队伍码", code));
+            source.sendFeedback(row("队伍码", code));
         } else {
-            ctx.getSource().sendFeedback(row("队伍码", "未设置（等待自动识别）"));
+            source.sendFeedback(row("队伍码", "未设置（等待自动识别）"));
+        }
+        PingRelayClient.Status status = PingDemo.relayStatus();
+        if (status == null) {
+            return 1;
+        }
+        source.sendFeedback(row("识别方式", "code".equals(status.mode()) ? "手动队伍码"
+                : "auto".equals(status.mode()) ? "自动（玩家列表 + 首次观测到的阵营）"
+                : "尚未识别"));
+        if (status.channel() != null) {
+            // Teammates comparing these eight characters is the quickest way to tell "we are in
+            // different channels" apart from "the relay is down".
+            String shown = status.channel().substring(0, Math.min(8, status.channel().length()));
+            source.sendFeedback(row("频道", shown + "（与队友核对这八位应一致）"));
+        }
+        source.sendFeedback(row("标点数", "本地 " + PingDemo.localPingCount()
+                + " / 队友 " + PingDemo.remotePingCount()));
+        if (status.lastError() != null) {
+            source.sendFeedback(row("最近错误", status.lastError()));
         }
         return 1;
     }
@@ -141,8 +161,18 @@ public final class CeStatsCommand {
     }
 
     private static String pingStatusText() {
-        if (!CeStatsClient.config().pingEnabled) return "已关闭";
-        return "已开启";
+        PingRelayClient.Status status = PingDemo.relayStatus();
+        if (status == null) {
+            return CeStatsClient.config().pingEnabled ? "已开启" : "已关闭";
+        }
+        return switch (status.phase()) {
+            case DISABLED -> "已关闭";
+            case UNPAIRED -> "未配对，无法同步（/cestats pair <配对码>）";
+            case NO_IDENTITY -> "已开启，但还没识别到队伍频道（可用 /cestats ping code）";
+            case JOINING -> "正在加入频道…";
+            case JOINED -> "已同步";
+            case RETRYING -> "已开启，正在重试加入";
+        };
     }
 
     private static int retry(CommandContext<FabricClientCommandSource> ctx) {

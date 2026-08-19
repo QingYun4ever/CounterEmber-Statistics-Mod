@@ -20,6 +20,7 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import net.minecraft.world.RaycastContext;
 
 /**
@@ -48,6 +49,8 @@ public final class PingDemo {
     private static final PingPolicy POLICY = new PingPolicy();
     private static final java.util.ArrayList<LocalPing> ACTIVE_PINGS = new java.util.ArrayList<>();
     private static final Map<String, LocalPing> REMOTE_PINGS = new HashMap<>();
+    /** Fresh per game session so a marker id is never reused across a reset or a restart. */
+    private static final String SESSION_NONCE = UUID.randomUUID().toString().substring(0, 8);
     private static PingRelayClient RELAY;
     private static long nextMarkerId;
     private static long lastParticleEmitAt = Long.MIN_VALUE;
@@ -201,7 +204,7 @@ public final class PingDemo {
 
     private static String newMarkerId() {
         String owner = RELAY == null ? "local" : RELAY.ownerId();
-        return owner + "-" + (++nextMarkerId);
+        return owner + "-" + SESSION_NONCE + "-" + (++nextMarkerId);
     }
 
     private static void emitMarker(ClientWorld world, LocalPing ping, long now) {
@@ -266,12 +269,15 @@ public final class PingDemo {
         String owner = RELAY == null ? "" : RELAY.ownerId();
         String dimension = client.world.getRegistryKey().getValue().toString();
         for (PingRelayClient.Marker marker : snapshot.markers()) {
-            if (marker.owner().equals(owner) || !marker.dimension().equals(dimension)
-                    || now >= marker.expiresAt()) continue;
+            if (marker.owner().equals(owner) || !marker.dimension().equals(dimension)) continue;
+            // Marker timestamps are already on the local clock. The cap is only a guard against a
+            // relay reporting a far-future expiry; normal expiry is the value itself.
+            long expiresAt = Math.min(marker.expiresAt(), now + WARNING_LIFETIME_MS);
+            if (now >= expiresAt) continue;
             PingKind kind = "warning".equals(marker.kind()) ? PingKind.WARNING : PingKind.NORMAL;
             REMOTE_PINGS.put(marker.id(), new LocalPing(marker.id(),
                     new Vec3d(marker.x(), marker.y(), marker.z()), kind,
-                    marker.createdAt(), marker.expiresAt()));
+                    Math.min(marker.createdAt(), now), expiresAt));
             seen.add(marker.id());
         }
         REMOTE_PINGS.keySet().removeIf(id -> !seen.contains(id));
@@ -280,6 +286,19 @@ public final class PingDemo {
     public static void setContext(String server, String player) {
         if (RELAY != null) RELAY.setContext(server, player);
         resetLocal();
+    }
+
+    /** Null before {@link #register} runs; otherwise the live relay state for {@code /cestats ping}. */
+    public static PingRelayClient.Status relayStatus() {
+        return RELAY == null ? null : RELAY.status();
+    }
+
+    public static int localPingCount() {
+        return ACTIVE_PINGS.size();
+    }
+
+    public static int remotePingCount() {
+        return REMOTE_PINGS.size();
     }
 
     public static void accept(ChatEvent event) {
@@ -300,7 +319,9 @@ public final class PingDemo {
     private static void resetLocal() {
         ACTIVE_PINGS.clear();
         REMOTE_PINGS.clear();
-        nextMarkerId = 0L;
+        // nextMarkerId deliberately keeps counting. The relay treats a repeated id as an idempotent
+        // retry, so re-issuing one while the previous marker is still alive there would leave
+        // teammates looking at the old position while this client shows the new one.
         lastParticleEmitAt = Long.MIN_VALUE;
         CLICK_DETECTOR.reset();
         POLICY.reset();

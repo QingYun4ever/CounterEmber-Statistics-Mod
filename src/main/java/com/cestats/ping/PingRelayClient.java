@@ -46,6 +46,9 @@ public final class PingRelayClient {
     private volatile boolean running;
     private volatile boolean joined;
     private volatile boolean joining;
+    private volatile boolean identityResolved;
+    private volatile String mode;
+    private volatile String lastError;
     private volatile String contextSignature;
     private volatile String channel;
     private volatile String token;
@@ -93,10 +96,12 @@ public final class PingRelayClient {
         PingIdentity.Identity desired = config.pingAutoJoin
                 ? identity.resolve(client, config.pingTeamCode)
                 : identity.manual(client, config.pingTeamCode);
+        identityResolved = desired != null;
         if (desired == null) {
             if (joined || joining) reset();
             return;
         }
+        mode = desired.mode();
 
         String desiredSignature = desired.mode() + "|" + desired.channel() + "|" + desired.dimension();
         if (desiredSignature.equals(contextSignature) && (joined || joining)) {
@@ -120,6 +125,25 @@ public final class PingRelayClient {
 
     public String channel() {
         return channel;
+    }
+
+    /** Everything {@code /cestats ping} needs to tell "working" apart from "silently doing nothing". */
+    public Status status() {
+        Phase phase;
+        if (!running || !config.enabled || !config.pingEnabled) {
+            phase = Phase.DISABLED;
+        } else if (!config.isPaired()) {
+            phase = Phase.UNPAIRED;
+        } else if (joined) {
+            phase = Phase.JOINED;
+        } else if (joining) {
+            phase = Phase.JOINING;
+        } else if (!identityResolved) {
+            phase = Phase.NO_IDENTITY;
+        } else {
+            phase = Phase.RETRYING;
+        }
+        return new Status(phase, mode, channel, lastError);
     }
 
     public void publish(String id, String kind, double x, double y, double z, String dimension) {
@@ -146,6 +170,9 @@ public final class PingRelayClient {
         token = null;
         revision = 0L;
         contextSignature = null;
+        lastError = null;
+        identityResolved = false;
+        mode = null;
         pending.set(null);
         synchronized (publicationLock) {
             pendingPublications.clear();
@@ -181,6 +208,7 @@ public final class PingRelayClient {
                     if (response.statusCode() < 200 || response.statusCode() >= 300) {
                         joining = false;
                         contextSignature = null;
+                        lastError = describeFailure("加入频道", response.statusCode(), response.body());
                         LOG.debug("[cestats] 标点中继加入失败 HTTP {}: {}",
                                 response.statusCode(), response.body());
                         return;
@@ -192,6 +220,7 @@ public final class PingRelayClient {
                         revision = root.get("revision").getAsLong();
                         joining = false;
                         joined = true;
+                        lastError = null;
                         pending.set(parseSnapshot(root));
                         flushPendingPublications(contextSignature, channel, token);
                         startPoller(currentEpoch, channel);
@@ -199,12 +228,14 @@ public final class PingRelayClient {
                     } catch (RuntimeException e) {
                         joining = false;
                         contextSignature = null;
+                        lastError = "加入响应无效：" + e;
                         LOG.debug("[cestats] 标点中继加入响应无效: {}", e.toString());
                     }
                 })
                 .exceptionally(error -> {
                     joining = false;
                     contextSignature = null;
+                    lastError = "无法连接站点：" + rootCause(error);
                     LOG.debug("[cestats] 标点中继加入出错: {}", error.toString());
                     return null;
                 });
@@ -229,6 +260,7 @@ public final class PingRelayClient {
                         HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
                 if (currentEpoch != epoch.get()) return;
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    lastError = describeFailure("轮询", response.statusCode(), response.body());
                     LOG.debug("[cestats] 标点中继轮询失败 HTTP {}", response.statusCode());
                     break;
                 }
@@ -239,6 +271,7 @@ public final class PingRelayClient {
                 Thread.currentThread().interrupt();
                 return;
             } catch (Exception e) {
+                lastError = "轮询出错：" + rootCause(e);
                 LOG.debug("[cestats] 标点中继轮询出错: {}", e.toString());
                 sleep(RETRY_MS);
             }
@@ -292,11 +325,15 @@ public final class PingRelayClient {
         return http.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
                 .thenAccept(response -> {
                     if (response.statusCode() >= 300) {
+                        lastError = describeFailure("发布标点", response.statusCode(), response.body());
                         LOG.debug("[cestats] 标点中继发布失败 HTTP {}: {}",
                                 response.statusCode(), response.body());
+                    } else {
+                        lastError = null;
                     }
                 })
                 .exceptionally(error -> {
+                    lastError = "发布标点出错：" + rootCause(error);
                     LOG.debug("[cestats] 标点中继发布出错: {}", error.toString());
                     return null;
                 });
@@ -305,6 +342,7 @@ public final class PingRelayClient {
     private Snapshot parseSnapshot(JsonObject root) {
         String snapshotChannel = root.get("channel").getAsString();
         long snapshotRevision = root.get("revision").getAsLong();
+        long skew = clockSkew(root);
         List<Marker> markers = new ArrayList<>();
         JsonArray array = root.getAsJsonArray("markers");
         if (array != null) {
@@ -318,11 +356,29 @@ public final class PingRelayClient {
                         marker.get("y").getAsDouble(),
                         marker.get("z").getAsDouble(),
                         marker.get("dimension").getAsString(),
-                        marker.get("createdAt").getAsLong(),
-                        marker.get("expiresAt").getAsLong()));
+                        marker.get("createdAt").getAsLong() + skew,
+                        marker.get("expiresAt").getAsLong() + skew));
             }
         }
         return new Snapshot(snapshotChannel, snapshotRevision, markers);
+    }
+
+    /**
+     * Difference between this machine's clock and the relay's, so {@code relayTime + skew} is a local
+     * timestamp. Marker lifetimes are only a few seconds, so comparing a relay timestamp against the
+     * local clock directly would drop every teammate marker on a client whose clock runs ahead of the
+     * site. Returns 0 for a relay that does not report its clock.
+     */
+    private static long clockSkew(JsonObject root) {
+        JsonElement now = root.get("now");
+        if (now == null || now.isJsonNull()) {
+            return 0L;
+        }
+        try {
+            return System.currentTimeMillis() - now.getAsLong();
+        } catch (RuntimeException e) {
+            return 0L;
+        }
     }
 
     private HttpRequest.Builder baseRequest(String url) {
@@ -338,6 +394,52 @@ public final class PingRelayClient {
         return Math.round(value * 20.0) / 20.0;
     }
 
+    /** Turns a relay rejection into something a player can act on, not just an HTTP number. */
+    private static String describeFailure(String action, int status, String body) {
+        String code = errorCode(body);
+        String hint = switch (code == null ? "" : code) {
+            case "unauthorized" -> "设备令牌无效或已被撤销，重新执行 /cestats pair <配对码>";
+            case "player_mismatch" -> "当前游戏名与配对时的账号不一致";
+            case "invalid_request" -> "请求被站点拒绝（格式不符）";
+            case "cooldown" -> "服务端仍在冷却";
+            case "limit" -> "已达到本人标点上限";
+            case "channel-limit" -> "该频道的标点已满";
+            case "unknown-marker" -> "要升级的标点在服务端已不存在";
+            case "internal_error" -> "站点内部错误";
+            default -> code != null ? code : shorten(body);
+        };
+        return action + " HTTP " + status + (hint.isEmpty() ? "" : "：" + hint);
+    }
+
+    private static String errorCode(String body) {
+        if (body == null || !body.trim().startsWith("{")) {
+            return null;
+        }
+        try {
+            JsonElement error = JsonParser.parseString(body).getAsJsonObject().get("error");
+            return error == null || error.isJsonNull() ? null : error.getAsString();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static String rootCause(Throwable error) {
+        Throwable cause = error;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        String message = cause.getMessage();
+        return message == null || message.isBlank() ? cause.getClass().getSimpleName() : shorten(message);
+    }
+
+    private static String shorten(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        String trimmed = text.trim();
+        return trimmed.length() <= 96 ? trimmed : trimmed.substring(0, 96) + "…";
+    }
+
     private static void sleep(long millis) {
         try {
             Thread.sleep(millis);
@@ -350,8 +452,23 @@ public final class PingRelayClient {
                                String dimension, String signature) {
     }
 
+    /** Why the relay is or is not currently syncing. */
+    public enum Phase {
+        DISABLED,
+        UNPAIRED,
+        NO_IDENTITY,
+        JOINING,
+        JOINED,
+        RETRYING
+    }
+
+    public record Status(Phase phase, String mode, String channel, String lastError) {
+    }
+
     public record Marker(String id, String owner, String kind, double x, double y, double z,
                          String dimension, long createdAt, long expiresAt) {
+        // createdAt/expiresAt are local-clock timestamps: PingRelayClient rebases the relay's values
+        // on arrival, so callers compare them against System.currentTimeMillis() directly.
     }
 
     public record Snapshot(String channel, long revision, List<Marker> markers) {
