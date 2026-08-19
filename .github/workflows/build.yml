@@ -14,8 +14,12 @@ permissions:
 
 jobs:
   build:
-    name: Build all Minecraft targets
+    name: Build Minecraft ${{ matrix.mcVersion }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mcVersion: ['1.21.4', '1.21.8', '1.21.11']
 
     steps:
       - name: Check out source
@@ -31,53 +35,42 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Prepare Gradle wrapper
-        run: chmod +x ./gradlew ./build-all.sh
+        run: chmod +x ./gradlew
 
       # gradle.properties contains a Windows-only local JDK override. The runner already
       # provides the required JDK through setup-java, so do not use that path in CI.
       - name: Remove local JDK override
         run: sed -i '/^[[:space:]]*org.gradle.java.home[[:space:]]*=/d' gradle.properties
 
-      - name: Build all targets without tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf dist
-          mkdir -p dist
+      - name: Build target without tests
+        run: ./gradlew --console=plain -PmcVersion="${{ matrix.mcVersion }}" assemble
 
-          for version in 1.21.4 1.21.8 1.21.11; do
-            echo "Building Minecraft ${version}"
-            ./gradlew --console=plain -PmcVersion="${version}" assemble
-            cp "build/${version}/libs/cestats-mc${version}-"*.jar dist/
-          done
-
-      - name: Verify one runtime jar per target
+      - name: Verify and stage runtime jar
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-
-          for version in 1.21.4 1.21.8 1.21.11; do
-            jars=("dist/cestats-mc${version}-"*.jar)
-            runtime_jars=()
-            for jar in "${jars[@]}"; do
-              [[ "$jar" == *-sources.jar ]] || runtime_jars+=("$jar")
-            done
-
-            if [[ "${#runtime_jars[@]}" -ne 1 ]]; then
-              printf 'Expected exactly one runtime jar for Minecraft %s, found %s:\n' \
-                "$version" "${#runtime_jars[@]}" >&2
-              printf '  %s\n' "${jars[@]}" >&2
-              exit 1
-            fi
+          version="${{ matrix.mcVersion }}"
+          jars=("build/${version}/libs/cestats-mc${version}-"*.jar)
+          runtime_jars=()
+          for jar in "${jars[@]}"; do
+            [[ "$jar" == *-sources.jar ]] || runtime_jars+=("$jar")
           done
 
-      - name: Upload mod jars
+          if [[ "${#runtime_jars[@]}" -ne 1 ]]; then
+            printf 'Expected exactly one runtime jar for Minecraft %s, found %s:\n' \
+              "$version" "${#runtime_jars[@]}" >&2
+            printf '  %s\n' "${jars[@]}" >&2
+            exit 1
+          fi
+
+          mkdir -p dist
+          cp "${runtime_jars[0]}" dist/
+
+      - name: Upload mod jar
         uses: actions/upload-artifact@v4
         with:
-          name: cestats-mod-jars
-          path: |
-            dist/*.jar
-            !dist/*-sources.jar
+          name: cestats-mod-${{ matrix.mcVersion }}
+          path: dist/*.jar
           if-no-files-found: error
           retention-days: 14
