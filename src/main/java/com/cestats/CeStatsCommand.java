@@ -22,6 +22,7 @@ public final class CeStatsCommand {
                         .executes(CeStatsCommand::status)
                         .then(ClientCommandManager.literal("status").executes(CeStatsCommand::status))
                         .then(ClientCommandManager.literal("toggle").executes(CeStatsCommand::toggle))
+                        .then(ClientCommandManager.literal("record").executes(CeStatsCommand::toggleRecording))
                         .then(ClientCommandManager.literal("retry").executes(CeStatsCommand::retry))
                         .then(ClientCommandManager.literal("open").executes(ctx ->
                                 openUrl(ctx, CeStatsClient.config().webBaseUrl)))
@@ -43,6 +44,11 @@ public final class CeStatsCommand {
         source.sendFeedback(head("CE Stats"));
         source.sendFeedback(row("状态", config.enabled ? "开启" : "关闭"));
         source.sendFeedback(row("上传", config.uploadEnabled ? "开启" : "关闭"));
+        source.sendFeedback(row("Flashback录制", config.flashbackAutoRecord ? "开启" : "关闭"));
+        if (CeStatsClient.recordingController() != null && config.flashbackAutoRecord) {
+            source.sendFeedback(row("Flashback", CeStatsClient.recordingController().isAvailable()
+                    ? "已检测" : "未安装或接口不兼容"));
+        }
         source.sendFeedback(row("接口", config.ingestUrl()));
         source.sendFeedback(row("网页", config.webBaseUrl));
         source.sendFeedback(row("本地存档", CeStatsClient.store().archivedCount() + " 场"));
@@ -55,7 +61,24 @@ public final class CeStatsCommand {
         CeStatsConfig config = CeStatsClient.config();
         config.enabled = !config.enabled;
         config.save();
+        if (CeStatsClient.recordingController() != null) {
+            CeStatsClient.recordingController().setEnabled(
+                    config.enabled && config.flashbackAutoRecord);
+        }
         ctx.getSource().sendFeedback(head(config.enabled ? "已开启统计" : "已关闭统计"));
+        return 1;
+    }
+
+    private static int toggleRecording(CommandContext<FabricClientCommandSource> ctx) {
+        CeStatsConfig config = CeStatsClient.config();
+        config.flashbackAutoRecord = !config.flashbackAutoRecord;
+        config.save();
+        if (CeStatsClient.recordingController() != null) {
+            CeStatsClient.recordingController().setEnabled(
+                    config.enabled && config.flashbackAutoRecord);
+        }
+        ctx.getSource().sendFeedback(head(config.flashbackAutoRecord
+                ? "已开启 Flashback 自动录制" : "已关闭 Flashback 自动录制"));
         return 1;
     }
 

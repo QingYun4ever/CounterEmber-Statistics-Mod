@@ -1,6 +1,8 @@
 package com.cestats;
 
 import com.cestats.config.CeStatsConfig;
+import com.cestats.integration.FlashbackBridge;
+import com.cestats.integration.MatchRecordingController;
 import com.cestats.match.MatchTracker;
 import com.cestats.model.MatchRecord;
 import com.cestats.net.MatchJson;
@@ -32,6 +34,7 @@ public final class CeStatsClient implements ClientModInitializer {
     private static MatchStore store;
     private static Uploader uploader;
     private static MatchTracker tracker;
+    private static MatchRecordingController recordingController;
     private static ChatNotifier notifier;
     private static String lastMatchId;
 
@@ -42,7 +45,9 @@ public final class CeStatsClient implements ClientModInitializer {
         notifier = new ChatNotifier(config);
         uploader = new Uploader(config, store, result ->
                 notifier.uploadResult(result.matchId(), result.ok(), result.message()));
-        tracker = new MatchTracker(CeStatsClient::onMatchFinished);
+        recordingController = new MatchRecordingController(new FlashbackBridge(),
+                config.enabled && config.flashbackAutoRecord);
+        tracker = new MatchTracker(CeStatsClient::onMatchFinished, recordingController::accept);
         uploader.start();
         PingDemo.register();
 
@@ -67,9 +72,13 @@ public final class CeStatsClient implements ClientModInitializer {
             LOG.info("[cestats] 已连接 {}，本地玩家 {}", server, user);
         });
 
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> tracker.reset());
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            recordingController.onDisconnect();
+            tracker.reset();
+        });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            recordingController.setEnabled(config.enabled && config.flashbackAutoRecord);
             tracker.tick(System.currentTimeMillis());
             notifier.flush(client);
         });
@@ -79,6 +88,7 @@ public final class CeStatsClient implements ClientModInitializer {
     }
 
     private static void onMatchFinished(MatchRecord match) {
+        recordingController.onMatchFinished();
         lastMatchId = match.matchId();
         String json = GSON.toJson(MatchJson.toJson(match));
         store.store(match.matchId(), json);
@@ -105,6 +115,10 @@ public final class CeStatsClient implements ClientModInitializer {
 
     public static ChatNotifier notifier() {
         return notifier;
+    }
+
+    public static MatchRecordingController recordingController() {
+        return recordingController;
     }
 
     public static String lastMatchId() {

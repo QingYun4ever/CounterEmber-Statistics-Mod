@@ -9,6 +9,7 @@ import net.minecraft.client.world.ClientWorld;
 import net.minecraft.particle.DustParticleEffect;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Vec3d;
 
@@ -33,8 +34,6 @@ public final class PingDemo {
 
     private static final PingClickDetector CLICK_DETECTOR = new PingClickDetector();
     private static LocalPing activePing;
-    private static Vec3d pendingPosition;
-    private static long lastTickAt;
 
     private PingDemo() {
     }
@@ -48,7 +47,6 @@ public final class PingDemo {
 
     private static void onClientTick(MinecraftClient client) {
         long now = System.currentTimeMillis();
-        lastTickAt = now;
         commitExpiredNormal(now);
 
         // This is the default middle-mouse action. It follows the player's existing Minecraft
@@ -79,19 +77,26 @@ public final class PingDemo {
             return;
         }
 
-        Vec3d position = target.getPos().add(0.0, 0.06, 0.0);
+        Vec3d position = markerPosition(target);
         PingClickDetector.ClickResult click = CLICK_DETECTOR.registerClick(now);
         if (click == PingClickDetector.ClickResult.WARNING) {
-            pendingPosition = null;
             activePing = new LocalPing(position, PingKind.WARNING, now,
                     now + WARNING_LIFETIME_MS);
             showOverlay(client, Text.literal("⚠ 警告标点").formatted(Formatting.RED));
         } else {
-            pendingPosition = position;
             activePing = new LocalPing(position, PingKind.NORMAL, now,
                     now + NORMAL_LIFETIME_MS);
             showOverlay(client, Text.literal("◎ 标点").formatted(Formatting.AQUA));
         }
+    }
+
+    private static Vec3d markerPosition(HitResult target) {
+        if (target instanceof BlockHitResult blockHit) {
+            var normal = blockHit.getSide().getVector();
+            return target.getPos().add(normal.getX() * 0.08, normal.getY() * 0.08,
+                    normal.getZ() * 0.08);
+        }
+        return target.getPos().add(0.0, 0.06, 0.0);
     }
 
     private static void emitMarker(ClientWorld world, LocalPing ping, long now) {
@@ -144,21 +149,14 @@ public final class PingDemo {
             return;
         }
 
-        CLICK_DETECTOR.commitPending();
-        // The normal ping was already shown immediately; only the detector remains pending so a
+        // The normal ping is already shown immediately; only the detector remains pending so a
         // second click can upgrade that marker to a warning.
-        pendingPosition = null;
+        CLICK_DETECTOR.commitPending();
     }
 
     public static void reset() {
         activePing = null;
-        pendingPosition = null;
-        lastTickAt = 0L;
         CLICK_DETECTOR.reset();
-    }
-
-    static long lastTickAtForTest() {
-        return lastTickAt;
     }
 
     private record LocalPing(Vec3d position, PingKind kind, long createdAt, long expiresAt) {

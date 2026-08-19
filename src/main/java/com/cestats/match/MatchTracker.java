@@ -81,13 +81,14 @@ public final class MatchTracker {
         if (event == null) {
             return;
         }
-        onEvent.accept(event);
-
         boolean combat = event instanceof ChatEvent.Kill || event instanceof ChatEvent.Death
                 || event instanceof ChatEvent.Bomb || event instanceof ChatEvent.RoundEnd;
         if (combat) {
             if (lastCombatTs != 0 && ts - lastCombatTs > CONTEXT_GAP_MS) {
                 clearRounds();
+                // Keep lifecycle integrations (for example replay recording) aligned with the
+                // same fallback boundary used by the statistics state machine.
+                onEvent.accept(new ChatEvent.ContextReset("战斗间隔超时"));
             }
             lastCombatTs = ts;
         }
@@ -111,6 +112,7 @@ public final class MatchTracker {
             case ChatEvent.Result result -> finalizeMatch(result.winner());
             case ChatEvent.ContextReset ignored -> clearRounds();
         }
+        onEvent.accept(event);
     }
 
     /**

@@ -3,7 +3,7 @@
   "id": "cestats",
   "version": "${version}",
   "name": "CE Stats",
-  "description": "把仿 CS2 团队爆破服务器的赛后播报解析成对局数据，并上报到自建统计站点。",
+  "description": "把仿 CS2 团队爆破服务器的赛后播报解析成对局数据，并提供一个本地视觉标点 demo。",
   "authors": [
     "diexuefeiwu"
   ],
@@ -25,6 +25,7 @@
     "java": ">=21"
   },
   "suggests": {
-    "modmenu": "*"
+    "modmenu": "*",
+    "flashback": "*"
   }
 }

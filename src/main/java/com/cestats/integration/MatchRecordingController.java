@@ -45,7 +45,10 @@ public final class MatchRecordingController {
             case ChatEvent.Death ignored -> onCombat();
             case ChatEvent.Bomb ignored -> onCombat();
             case ChatEvent.RoundEnd ignored -> onCombat();
-            case ChatEvent.Result ignored -> finishOwned("比赛结果");
+            case ChatEvent.Result ignored -> {
+                // MatchTracker emits onMatchFinished after it has built the MatchRecord. Finish
+                // there instead of here so the result packet stays inside the replay.
+            }
             case ChatEvent.Stats ignored -> {
                 // The result line normally follows this table. Keep recording through the table so
                 // the final scoreboard state is present in the replay.
@@ -65,6 +68,10 @@ public final class MatchRecordingController {
         finishOwned("离开服务器");
         matchActive = false;
         startAttempted = false;
+    }
+
+    public boolean isAvailable() {
+        return gateway.isAvailable();
     }
 
     public boolean ownsRecording() {

@@ -30,6 +30,10 @@ public final class CeStatsConfigScreen {
                     if (CeStatsClient.uploader() != null) {
                         CeStatsClient.uploader().requeuePending();
                     }
+                    if (CeStatsClient.recordingController() != null) {
+                        CeStatsClient.recordingController().setEnabled(
+                                config.enabled && config.flashbackAutoRecord);
+                    }
                 });
 
         ConfigEntryBuilder entries = builder.entryBuilder();
@@ -49,6 +53,11 @@ public final class CeStatsConfigScreen {
                 .setDefaultValue(true)
                 .setTooltip(Text.literal("比赛结算后在聊天框显示本场数据和查看链接"))
                 .setSaveConsumer(value -> config.notifyOnMatchEnd = value)
+                .build());
+        general.addEntry(entries.startBooleanToggle(Text.literal("Flashback 自动录制"), config.flashbackAutoRecord)
+                .setDefaultValue(false)
+                .setTooltip(Text.literal("安装 Flashback 后，按 CE Stats 识别的比赛边界自动开始和结束录制；需在 Flashback 中开启 Quick Save"))
+                .setSaveConsumer(value -> config.flashbackAutoRecord = value)
                 .build());
 
         ConfigCategory server = builder.getOrCreateCategory(Text.literal("服务器"));
