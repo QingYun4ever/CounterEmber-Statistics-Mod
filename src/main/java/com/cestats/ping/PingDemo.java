@@ -73,6 +73,7 @@ public final class PingDemo {
     private static void placeFromCrosshair(MinecraftClient client, long now) {
         HitResult target = client.crosshairTarget;
         if (target == null || target.getType() == HitResult.Type.MISS) {
+            CLICK_DETECTOR.reset();
             showOverlay(client, Text.literal("标点失败：准星没有目标").formatted(Formatting.GRAY));
             return;
         }
