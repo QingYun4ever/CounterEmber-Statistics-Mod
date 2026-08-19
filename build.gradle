@@ -16,6 +16,11 @@ plugins {
 // 1.21.5 rewrote ClickEvent/HoverEvent from classes into sealed interfaces, which is the only
 // API break this mod actually hits. Rather than pulling in Stonecutter for two constructor
 // calls, each target picks a `compat` source directory holding its own TextCompat.
+//
+// World rendering breaks on a different line: 1.21.9 moved Fabric's WorldRenderEvents into
+// ...rendering.v1.world, renamed Camera.getPos to getCameraPos, and moved the render layer
+// factories from RenderLayer to RenderLayers. That split does not coincide with the text one
+// (1.21.8 shares `compat` with 1.21.11 but not `render`), so it gets its own source directory.
 // ---------------------------------------------------------------------------
 def TARGETS = [
         '1.21.4' : [
@@ -25,6 +30,7 @@ def TARGETS = [
                 cloth  : '17.0.144',
                 modmenu: '13.0.4',
                 compat : 'v1_21_4',
+                render : 'r1_21_4',
                 depends: '>=1.21.2 <1.21.5',
         ],
         '1.21.8' : [
@@ -34,6 +40,7 @@ def TARGETS = [
                 cloth  : '19.0.147',
                 modmenu: '15.0.2',
                 compat : 'v1_21_5',
+                render : 'r1_21_4',
                 depends: '>=1.21.5 <1.21.9',
         ],
         '1.21.11': [
@@ -43,6 +50,7 @@ def TARGETS = [
                 cloth  : '21.11.153',
                 modmenu: '17.0.1-beta.1',
                 compat : 'v1_21_5',
+                render : 'r1_21_9',
                 depends: '>=1.21.9 <1.22',
         ],
 ]
@@ -52,7 +60,7 @@ def target = TARGETS[mcVersion]
 if (target == null) {
     throw new GradleException("未知的 mcVersion '${mcVersion}'，可选：${TARGETS.keySet().join(', ')}")
 }
-logger.lifecycle("CE Stats: 目标 Minecraft ${mcVersion} (compat=${target.compat})")
+logger.lifecycle("CE Stats: 目标 Minecraft ${mcVersion} (compat=${target.compat}, render=${target.render})")
 
 version = "${project.mod_version}+mc${mcVersion}"
 group = project.maven_group
@@ -67,6 +75,7 @@ base {
 sourceSets {
     main {
         java.srcDir "src/compat/${target.compat}/java"
+        java.srcDir "src/render/${target.render}/java"
     }
 }
 

@@ -1,6 +1,5 @@
 package com.cestats.ping;
 
-import com.cestats.compat.ParticleCompat;
 import com.cestats.config.CeStatsConfig;
 import com.cestats.parse.ChatEvent;
 import com.cestats.ui.ChatNotifier;
@@ -8,16 +7,16 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.hud.InGameHud;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.particle.DustParticleEffect;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Vec3d;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -29,27 +28,20 @@ import net.minecraft.world.RaycastContext;
  *
  * <p>It uses the vanilla pick-item binding (middle mouse by default), so a click is consumed at
  * the start of the client tick before vanilla creative pick-block handling. The target is a
- * straight 64-block ray, with a three-marker cap and a short cooldown. Rendering remains local;
- * the optional relay only forwards quantized coordinates and expiry metadata.</p>
+ * straight 64-block ray, with a three-marker cap and a short cooldown. Rendering remains local
+ * (see {@link PingMarkerRenderer}); the optional relay only forwards quantized coordinates and
+ * expiry metadata.</p>
  */
 public final class PingDemo {
 
     private static final long NORMAL_LIFETIME_MS = 4_000L;
     private static final long WARNING_LIFETIME_MS = 5_000L;
-    private static final long PARTICLE_INTERVAL_MS = 220L;
     private static final double MAX_PING_DISTANCE = 64.0;
-
-    private static final DustParticleEffect NORMAL_PARTICLE =
-            new DustParticleEffect(0x29E6E8, 0.58F);
-    private static final DustParticleEffect WARNING_PARTICLE =
-            new DustParticleEffect(0xFF3045, 0.68F);
-    private static final DustParticleEffect WARNING_ACCENT_PARTICLE =
-            new DustParticleEffect(0xFFD23F, 0.56F);
 
     private static final PingClickDetector CLICK_DETECTOR = new PingClickDetector();
     private static final PingPolicy POLICY = new PingPolicy();
-    private static final java.util.ArrayList<LocalPing> ACTIVE_PINGS = new java.util.ArrayList<>();
-    private static final Map<String, LocalPing> REMOTE_PINGS = new HashMap<>();
+    private static final List<PingMarker> ACTIVE_PINGS = new ArrayList<>();
+    private static final Map<String, PingMarker> REMOTE_PINGS = new HashMap<>();
     /** Ids already reported as skipped, so one unusable teammate marker logs once, not once per poll. */
     private static final Set<String> DEBUG_REPORTED_DROPS = new HashSet<>();
     /** Fresh per game session so a marker id is never reused across a reset or a restart. */
@@ -58,7 +50,6 @@ public final class PingDemo {
     private static ChatNotifier NOTIFIER;
     private static PingRelayClient RELAY;
     private static long nextMarkerId;
-    private static long lastParticleEmitAt = Long.MIN_VALUE;
 
     private PingDemo() {
     }
@@ -72,6 +63,7 @@ public final class PingDemo {
         // click from also being handled as creative pick-block by vanilla later in the tick.
         ClientTickEvents.START_CLIENT_TICK.register(PingDemo::onClientTick);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> reset());
+        PingMarkerRenderer.register();
     }
 
     /**
@@ -98,10 +90,6 @@ public final class PingDemo {
             applyRemoteSnapshot(client, RELAY.consumeSnapshot(), now);
         }
         commitExpiredNormal(now);
-        if (client.world != null) {
-            ACTIVE_PINGS.removeIf(ping -> now >= ping.expiresAt());
-            REMOTE_PINGS.values().removeIf(ping -> now >= ping.expiresAt());
-        }
 
         // This is the default middle-mouse action. It follows the player's existing Minecraft
         // keybind for the demo; a future standalone version can expose a dedicated physical mouse
@@ -121,18 +109,18 @@ public final class PingDemo {
 
         ACTIVE_PINGS.removeIf(ping -> now >= ping.expiresAt());
         REMOTE_PINGS.values().removeIf(ping -> now >= ping.expiresAt());
-        if (ACTIVE_PINGS.isEmpty() && REMOTE_PINGS.isEmpty()
-                || (lastParticleEmitAt != Long.MIN_VALUE
-                && now - lastParticleEmitAt < PARTICLE_INTERVAL_MS)) {
-            return;
-        }
-        lastParticleEmitAt = now;
-        for (LocalPing ping : ACTIVE_PINGS) {
-            emitMarker(client.world, ping, now);
-        }
-        for (LocalPing ping : REMOTE_PINGS.values()) {
-            emitMarker(client.world, ping, now);
-        }
+    }
+
+    /**
+     * Hands the world renderer everything that should be on screen right now, local markers first.
+     *
+     * <p>Called once per frame on the render thread, which is why it fills a caller-owned list
+     * instead of allocating: the tick thread only ever mutates these collections, so a copy here is
+     * both cheap and enough to keep the renderer off them.</p>
+     */
+    static void collectMarkers(List<PingMarker> out) {
+        out.addAll(ACTIVE_PINGS);
+        out.addAll(REMOTE_PINGS.values());
     }
 
     private static void placeFromCrosshair(MinecraftClient client, long now) {
@@ -147,8 +135,8 @@ public final class PingDemo {
         PingClickDetector.ClickResult click = CLICK_DETECTOR.registerClick(now);
         if (click == PingClickDetector.ClickResult.WARNING) {
             if (!ACTIVE_PINGS.isEmpty()) {
-                LocalPing previous = ACTIVE_PINGS.get(ACTIVE_PINGS.size() - 1);
-                LocalPing warning = new LocalPing(previous.id(), position, PingKind.WARNING, now,
+                PingMarker previous = ACTIVE_PINGS.get(ACTIVE_PINGS.size() - 1);
+                PingMarker warning = new PingMarker(previous.id(), position, PingKind.WARNING, now,
                         now + WARNING_LIFETIME_MS);
                 ACTIVE_PINGS.set(ACTIVE_PINGS.size() - 1, warning);
                 publish(warning);
@@ -180,7 +168,7 @@ public final class PingDemo {
             return;
         }
 
-        LocalPing ping = new LocalPing(newMarkerId(), position, PingKind.NORMAL, now,
+        PingMarker ping = new PingMarker(newMarkerId(), position, PingKind.NORMAL, now,
                 now + NORMAL_LIFETIME_MS);
         ACTIVE_PINGS.add(ping);
         publish(ping);
@@ -217,7 +205,7 @@ public final class PingDemo {
         return target.getPos().add(0.0, 0.06, 0.0);
     }
 
-    private static void publish(LocalPing ping) {
+    private static void publish(PingMarker ping) {
         if (RELAY != null) {
             RELAY.publish(ping.id(), ping.kind() == PingKind.WARNING ? "warning" : "normal",
                     ping.position().x, ping.position().y, ping.position().z,
