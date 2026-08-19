@@ -79,6 +79,7 @@ public final class CeStatsClient implements ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             recordingController.setEnabled(config.enabled && config.flashbackAutoRecord);
+            recordingController.tick();
             tracker.tick(System.currentTimeMillis());
             notifier.flush(client);
         });

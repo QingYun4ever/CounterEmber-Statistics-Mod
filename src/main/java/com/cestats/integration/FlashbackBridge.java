@@ -1,6 +1,7 @@
 package com.cestats.integration;
 
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.MinecraftClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,7 +14,7 @@ import java.lang.reflect.Method;
  *
  * <p>Flashback is deliberately not a compile-time dependency: CE Stats must still load and
  * operate when the replay mod is absent. The two methods and the recorder field used here are
- * public in the Flashback releases currently targeted by this mod (1.21.4 and 1.21.8); resolving
+ * public in the Flashback releases currently targeted by this mod (1.21.4, 1.21.8 and 1.21.11); resolving
  * them at runtime also keeps the three CE Stats Minecraft targets on one source set.</p>
  */
 public final class FlashbackBridge implements RecordingGateway {
@@ -23,11 +24,12 @@ public final class FlashbackBridge implements RecordingGateway {
     private static final String API_CLASS = "com.moulberry.flashback.Flashback";
 
     private static volatile boolean resolved;
+    private static volatile boolean startBroken;
     private static volatile Api api;
 
     @Override
     public boolean isAvailable() {
-        return resolve() != null;
+        return !startBroken && resolve() != null;
     }
 
     @Override
@@ -47,16 +49,30 @@ public final class FlashbackBridge implements RecordingGateway {
     @Override
     public boolean start() {
         Api resolvedApi = resolve();
-        if (resolvedApi == null || isRecording()) {
+        if (resolvedApi == null || startBroken || isRecording()) {
+            return false;
+        }
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.player == null || client.world == null) {
+            // The room message can arrive while the client is still joining. The controller will
+            // retry from the client tick once Flashback has a registry/player to record.
             return false;
         }
         try {
             resolvedApi.start.invoke(null);
-            return resolvedApi.recorder.get(null) != null;
+            boolean started = resolvedApi.recorder.get(null) != null;
+            if (!started) {
+                // The method was present but Flashback rejected this recording (for example due
+                // to an incompatible installed mod). Do not hammer the entry point every tick.
+                startBroken = true;
+            }
+            return started;
         } catch (InvocationTargetException e) {
+            startBroken = true;
             logInvocationFailure("开始录制", causeOf(e));
             return false;
         } catch (ReflectiveOperationException | LinkageError e) {
+            startBroken = true;
             logInvocationFailure("开始录制", e);
             return false;
         }

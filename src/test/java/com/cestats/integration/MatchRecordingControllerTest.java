@@ -41,6 +41,21 @@ class MatchRecordingControllerTest {
     }
 
     @Test
+    @DisplayName("客户端还没准备好时会在 tick 中重试启动")
+    void retriesStartFromClientTick() {
+        FakeGateway gateway = new FakeGateway();
+        gateway.failStarts = 1;
+        MatchRecordingController controller = new MatchRecordingController(gateway, true);
+
+        controller.accept(new ChatEvent.ContextReset("加入房间"));
+        assertFalse(controller.ownsRecording());
+
+        controller.tick();
+        assertTrue(controller.ownsRecording());
+        assertEquals(2, gateway.starts);
+    }
+
+    @Test
     @DisplayName("不会接管或结束用户已经启动的 Flashback 录制")
     void doesNotTakeOwnershipOfExistingRecording() {
         FakeGateway gateway = new FakeGateway();
@@ -54,6 +69,19 @@ class MatchRecordingControllerTest {
         assertEquals(0, gateway.starts);
         assertEquals(0, gateway.finishes);
         assertTrue(gateway.recording);
+    }
+
+    @Test
+    @DisplayName("没有统计表时，比赛结果也会结束录制")
+    void resultStopsRecordingWithoutStatsTable() {
+        FakeGateway gateway = new FakeGateway();
+        MatchRecordingController controller = new MatchRecordingController(gateway, true);
+
+        controller.accept(new ChatEvent.ContextReset("加入房间"));
+        controller.accept(new ChatEvent.Result(com.cestats.model.Winner.CT));
+
+        assertFalse(controller.ownsRecording());
+        assertEquals(1, gateway.finishes);
     }
 
     @Test
@@ -73,6 +101,7 @@ class MatchRecordingControllerTest {
         private boolean recording;
         private int starts;
         private int finishes;
+        private int failStarts;
 
         @Override
         public boolean isAvailable() {
@@ -87,6 +116,10 @@ class MatchRecordingControllerTest {
         @Override
         public boolean start() {
             starts++;
+            if (failStarts > 0) {
+                failStarts--;
+                return false;
+            }
             recording = true;
             return true;
         }
