@@ -26,6 +26,8 @@ for %%v in (%VERSIONS%) do (
     echo ==============================================
     echo   Minecraft %%v
     echo ==============================================
+    REM Remove artifacts from older version bumps before collecting this build.
+    if exist "build\%%v\libs\*.jar" del /q "build\%%v\libs\*.jar"
     call "%GRADLE_CMD%" --console=plain -PmcVersion=%%v build
     if errorlevel 1 (
         echo.

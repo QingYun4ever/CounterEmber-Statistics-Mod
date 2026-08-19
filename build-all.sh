@@ -21,6 +21,8 @@ for v in "${VERSIONS[@]}"; do
   echo "=============================================="
   echo "  Minecraft $v"
   echo "=============================================="
+  # Remove artifacts from older version bumps before collecting this build.
+  rm -f "build/$v/libs/"*.jar
   "$GRADLE" --console=plain -PmcVersion="$v" build
   cp "build/$v/libs/cestats-mc$v-"*.jar dist/ 2>/dev/null || true
 done
