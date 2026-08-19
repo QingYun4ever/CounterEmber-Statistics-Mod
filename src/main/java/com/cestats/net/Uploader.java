@@ -155,7 +155,7 @@ public final class Uploader {
             if (code == 401 || code == 403) {
                 // Leave the archive pending, but stop hammering a revoked/unpaired token. The pair
                 // command requeues pending archives after a new token is stored.
-                onResult.accept(new Result(matchId, false, "设备令牌无效，请执行 /cestats pair <配对码>", null));
+                onResult.accept(new Result(matchId, false, "设备令牌无效，请执行 /cestats bind", null));
                 return new Outcome(true);
             }
             return new Outcome(false);

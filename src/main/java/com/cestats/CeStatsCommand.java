@@ -2,6 +2,7 @@ package com.cestats;
 
 import com.cestats.compat.TextCompat;
 import com.cestats.config.CeStatsConfig;
+import com.cestats.net.BindClient;
 import com.cestats.net.PairingClient;
 import com.cestats.ping.PingDemo;
 import com.cestats.ping.PingRelayClient;
@@ -12,6 +13,7 @@ import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+import net.minecraft.client.network.ServerInfo;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 
@@ -40,13 +42,19 @@ public final class CeStatsCommand {
                                         .then(ClientCommandManager.argument("code", StringArgumentType.word())
                                                 .executes(CeStatsCommand::joinPingCode)))
                                 .then(ClientCommandManager.literal("leave")
-                                        .executes(CeStatsCommand::leavePingCode)))
+                                        .executes(CeStatsCommand::leavePingCode))
+                                .then(ClientCommandManager.literal("debug")
+                                        .executes(CeStatsCommand::togglePingDebug)))
                         .then(ClientCommandManager.literal("url")
                                 .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
                                         .executes(ctx -> setUrl(ctx, false))))
                         .then(ClientCommandManager.literal("web")
                                 .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
                                         .executes(ctx -> setUrl(ctx, true))))
+                        .then(ClientCommandManager.literal("bind")
+                                .executes(CeStatsCommand::bind)
+                                .then(ClientCommandManager.literal("cancel")
+                                        .executes(CeStatsCommand::cancelBind)))
                         .then(ClientCommandManager.literal("pair")
                                 .then(ClientCommandManager.argument("code", StringArgumentType.word())
                                         .executes(CeStatsCommand::pair)))
@@ -68,7 +76,9 @@ public final class CeStatsCommand {
         source.sendFeedback(row("接口", config.ingestUrl()));
         source.sendFeedback(row("上传身份", config.isPaired()
                 ? "已配对（" + config.pairedPlayer + "）"
-                : "未配对（/cestats pair <配对码>）"));
+                : BindClient.inProgress()
+                        ? "等待群内批准绑定码中"
+                        : "未配对（/cestats bind 取绑定码，再去 QQ 群批准）"));
         source.sendFeedback(row("网页", config.webBaseUrl));
         source.sendFeedback(row("本地存档", CeStatsClient.store().archivedCount() + " 场"));
         source.sendFeedback(row("待上传", CeStatsClient.uploader().queueSize() + " 场"));
@@ -111,6 +121,9 @@ public final class CeStatsCommand {
         } else {
             source.sendFeedback(row("队伍码", "未设置（等待自动识别）"));
         }
+        source.sendFeedback(row("调试输出", CeStatsClient.config().pingDebug
+                ? "开启（/cestats ping debug 关闭）"
+                : "关闭（/cestats ping debug 开启，每次标点会显示是否同步成功）"));
         PingRelayClient.Status status = PingDemo.relayStatus();
         if (status == null) {
             return 1;
@@ -129,6 +142,16 @@ public final class CeStatsCommand {
         if (status.lastError() != null) {
             source.sendFeedback(row("最近错误", status.lastError()));
         }
+        return 1;
+    }
+
+    private static int togglePingDebug(CommandContext<FabricClientCommandSource> ctx) {
+        CeStatsConfig config = CeStatsClient.config();
+        config.pingDebug = !config.pingDebug;
+        config.save();
+        ctx.getSource().sendFeedback(head(config.pingDebug
+                ? "已开启标点调试输出：每次标点都会在聊天里显示是否同步成功"
+                : "已关闭标点调试输出"));
         return 1;
     }
 
@@ -167,7 +190,7 @@ public final class CeStatsCommand {
         }
         return switch (status.phase()) {
             case DISABLED -> "已关闭";
-            case UNPAIRED -> "未配对，无法同步（/cestats pair <配对码>）";
+            case UNPAIRED -> "未配对，无法同步（/cestats bind）";
             case NO_IDENTITY -> "已开启，但还没识别到队伍频道（可用 /cestats ping code）";
             case JOINING -> "正在加入频道…";
             case JOINED -> "已同步";
@@ -215,6 +238,63 @@ public final class CeStatsCommand {
         config.save();
         ctx.getSource().sendFeedback(head((web ? "网页地址" : "接口地址") + " 已设为 " + value));
         return 1;
+    }
+
+    /**
+     * Asks the site for a bind code and prints it for relaying into the QQ group.
+     *
+     * <p>The code is safe to paste into a public chat: it only names a pending request, and the
+     * device token it unlocks is delivered back to <em>this</em> client. See {@link BindClient}.
+     */
+    private static int bind(CommandContext<FabricClientCommandSource> ctx) {
+        FabricClientCommandSource source = ctx.getSource();
+        if (BindClient.inProgress()) {
+            source.sendFeedback(head("上一个绑定请求还在等待批准；/cestats bind cancel 可以放弃"));
+            return 0;
+        }
+
+        CeStatsConfig config = CeStatsClient.config();
+        String player = CeStatsClient.client().getSession().getUsername();
+        ServerInfo info = CeStatsClient.client().getCurrentServerEntry();
+        String server = info != null ? info.address : null;
+
+        source.sendFeedback(head("正在向站点申请绑定码…"));
+        BindClient.bind(config, player, server,
+                opened -> CeStatsClient.client().execute(() -> {
+                    source.sendFeedback(head("绑定码 ")
+                            .append(TextCompat.copyable(opened.code(), opened.code(), "点击复制绑定码"))
+                            .append(Text.literal(" （点击可复制）").formatted(Formatting.DARK_GRAY)));
+                    source.sendFeedback(row("下一步", "在 QQ 群发送  /配对 " + opened.code()));
+                    source.sendFeedback(row("有效期", remainingMinutes(opened.expiresAt())
+                            + " 分钟；群里批准后这里会自动配对完成"));
+                }),
+                result -> CeStatsClient.client().execute(() -> {
+                    if (result.ok()) {
+                        CeStatsClient.uploader().requeuePending();
+                        source.sendFeedback(head(result.message()));
+                    } else {
+                        source.sendError(Text.literal(result.message()));
+                    }
+                }));
+        return 1;
+    }
+
+    private static int cancelBind(CommandContext<FabricClientCommandSource> ctx) {
+        if (!BindClient.inProgress()) {
+            ctx.getSource().sendFeedback(head("当前没有等待批准的绑定请求"));
+            return 0;
+        }
+        BindClient.cancel();
+        ctx.getSource().sendFeedback(head("已停止等待；站点上那个绑定码会自己过期"));
+        return 1;
+    }
+
+    /** Trusts the site's TTL rather than restating it, so the two can never disagree. */
+    private static long remainingMinutes(long expiresAt) {
+        if (expiresAt <= 0) {
+            return 20;
+        }
+        return Math.max(1, (expiresAt - System.currentTimeMillis()) / 60_000);
     }
 
     private static int pair(CommandContext<FabricClientCommandSource> ctx) {

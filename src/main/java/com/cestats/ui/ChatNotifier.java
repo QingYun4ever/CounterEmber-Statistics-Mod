@@ -89,6 +89,16 @@ public final class ChatNotifier {
         return TextCompat.link(label, url);
     }
 
+    /**
+     * One line per ping event while {@code /cestats ping debug} is on: green when the relay confirmed
+     * the marker, red when it did not. Deliberately unconditional here — the caller owns the switch.
+     */
+    public void pingDebug(String message, boolean ok) {
+        send(prefix()
+                .append(Text.literal("标点调试 ").formatted(Formatting.DARK_GRAY))
+                .append(Text.literal(message).formatted(ok ? Formatting.GREEN : Formatting.RED)));
+    }
+
     private static MutableText prefix() {
         return Text.literal("[CE] ").formatted(Formatting.AQUA);
     }

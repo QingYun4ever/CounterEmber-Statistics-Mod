@@ -27,6 +27,8 @@ public final class CeStatsConfig {
     public boolean pingEnabled = true;
     /** Automatically use the visible roster and first observed side for relay channel discovery. */
     public boolean pingAutoJoin = true;
+    /** Print one chat line per ping showing whether the relay accepted it. Off by default. */
+    public boolean pingDebug = false;
     /** Volatile team code; kept in memory by commands and not written to disk. */
     public transient String pingTeamCode;
     /** Automatically start/finish a Flashback replay around parsed matches when Flashback exists. */
@@ -91,6 +93,16 @@ public final class CeStatsConfig {
 
     public String pairUrl() {
         return trimSlash(apiBaseUrl) + "/api/pair";
+    }
+
+    /** Opens an in-game pairing request; the reply carries the short code the player reports. */
+    public String pairRequestUrl() {
+        return trimSlash(apiBaseUrl) + "/api/pair/request";
+    }
+
+    /** Polled with the local claim secret until somebody approves the code. */
+    public String pairClaimUrl() {
+        return trimSlash(apiBaseUrl) + "/api/pair/claim";
     }
 
     public boolean isPaired() {

@@ -52,7 +52,7 @@ public final class CeStatsClient implements ClientModInitializer {
             PingDemo.accept(event);
         });
         uploader.start();
-        PingDemo.register(config);
+        PingDemo.register(config, notifier);
 
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             if (overlay || !config.enabled) {

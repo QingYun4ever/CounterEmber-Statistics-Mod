@@ -3,6 +3,7 @@ package com.cestats.ping;
 import com.cestats.compat.ParticleCompat;
 import com.cestats.config.CeStatsConfig;
 import com.cestats.parse.ChatEvent;
+import com.cestats.ui.ChatNotifier;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
@@ -49,8 +50,12 @@ public final class PingDemo {
     private static final PingPolicy POLICY = new PingPolicy();
     private static final java.util.ArrayList<LocalPing> ACTIVE_PINGS = new java.util.ArrayList<>();
     private static final Map<String, LocalPing> REMOTE_PINGS = new HashMap<>();
+    /** Ids already reported as skipped, so one unusable teammate marker logs once, not once per poll. */
+    private static final Set<String> DEBUG_REPORTED_DROPS = new HashSet<>();
     /** Fresh per game session so a marker id is never reused across a reset or a restart. */
     private static final String SESSION_NONCE = UUID.randomUUID().toString().substring(0, 8);
+    private static CeStatsConfig CONFIG;
+    private static ChatNotifier NOTIFIER;
     private static PingRelayClient RELAY;
     private static long nextMarkerId;
     private static long lastParticleEmitAt = Long.MIN_VALUE;
@@ -58,13 +63,32 @@ public final class PingDemo {
     private PingDemo() {
     }
 
-    public static void register(CeStatsConfig config) {
-        RELAY = new PingRelayClient(config);
+    public static void register(CeStatsConfig config, ChatNotifier notifier) {
+        CONFIG = config;
+        NOTIFIER = notifier;
+        RELAY = new PingRelayClient(config, PingDemo::debug);
         RELAY.start();
         // START is intentional: consuming pickItemKey.wasPressed() here prevents the same middle
         // click from also being handled as creative pick-block by vanilla later in the tick.
         ClientTickEvents.START_CLIENT_TICK.register(PingDemo::onClientTick);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> reset());
+    }
+
+    /**
+     * Debug sink for the relay and for local rejections. The relay calls this from HTTP callback and
+     * poller threads, so it must not touch the HUD directly; ChatNotifier queues for the client tick.
+     */
+    private static void debug(String message, boolean ok) {
+        if (NOTIFIER != null) {
+            NOTIFIER.pingDebug(message, ok);
+        }
+    }
+
+    /** Local-side debug line, for outcomes decided before the relay is ever asked. */
+    private static void debugLocal(String message, boolean ok) {
+        if (CONFIG != null && CONFIG.pingDebug) {
+            debug(message, ok);
+        }
     }
 
     private static void onClientTick(MinecraftClient client) {
@@ -116,6 +140,7 @@ public final class PingDemo {
         if (position == null) {
             CLICK_DETECTOR.reset();
             showOverlay(client, Text.literal("标点失败：无法取得准星位置").formatted(Formatting.GRAY));
+            debugLocal("本地拒绝：无法取得准星位置", false);
             return;
         }
 
@@ -133,6 +158,7 @@ public final class PingDemo {
                 CLICK_DETECTOR.reset();
                 showOverlay(client, Text.literal("警告标点失败：没有可升级的标点")
                         .formatted(Formatting.GRAY));
+                debugLocal("本地拒绝：没有可升级为警告的标点", false);
             }
             return;
         }
@@ -143,12 +169,14 @@ public final class PingDemo {
             double seconds = POLICY.cooldownRemainingMs(now) / 1_000.0;
             showOverlay(client, Text.literal(String.format(Locale.ROOT, "标点冷却中 %.1fs", seconds))
                     .formatted(Formatting.YELLOW));
+            debugLocal(String.format(Locale.ROOT, "本地拒绝：冷却中，还需 %.1fs", seconds), false);
             return;
         }
         if (decision == PingPolicy.Decision.LIMIT_REACHED) {
             CLICK_DETECTOR.reset();
             showOverlay(client, Text.literal("标点已达到上限（" + POLICY.maxActivePings() + " 个）")
                     .formatted(Formatting.YELLOW));
+            debugLocal("本地拒绝：已达到标点上限（" + POLICY.maxActivePings() + " 个）", false);
             return;
         }
 
@@ -269,18 +297,44 @@ public final class PingDemo {
         String owner = RELAY == null ? "" : RELAY.ownerId();
         String dimension = client.world.getRegistryKey().getValue().toString();
         for (PingRelayClient.Marker marker : snapshot.markers()) {
-            if (marker.owner().equals(owner) || !marker.dimension().equals(dimension)) continue;
+            if (marker.owner().equals(owner)) continue;
+            if (!marker.dimension().equals(dimension)) {
+                // Worth reporting once: it means teammates are synced but standing in different
+                // worlds, which otherwise looks identical to "the relay never delivered anything".
+                if (DEBUG_REPORTED_DROPS.add(marker.id())) {
+                    debugLocal("忽略队友标点：来自其他世界 " + marker.dimension(), false);
+                }
+                continue;
+            }
             // Marker timestamps are already on the local clock. The cap is only a guard against a
             // relay reporting a far-future expiry; normal expiry is the value itself.
             long expiresAt = Math.min(marker.expiresAt(), now + WARNING_LIFETIME_MS);
-            if (now >= expiresAt) continue;
+            if (now >= expiresAt) {
+                if (DEBUG_REPORTED_DROPS.add(marker.id())) {
+                    debugLocal(String.format(Locale.ROOT, "忽略队友标点：已过期 %.1fs",
+                            (now - marker.expiresAt()) / 1_000.0), false);
+                }
+                continue;
+            }
             PingKind kind = "warning".equals(marker.kind()) ? PingKind.WARNING : PingKind.NORMAL;
-            REMOTE_PINGS.put(marker.id(), new LocalPing(marker.id(),
+            LocalPing previous = REMOTE_PINGS.put(marker.id(), new LocalPing(marker.id(),
                     new Vec3d(marker.x(), marker.y(), marker.z()), kind,
                     Math.min(marker.createdAt(), now), expiresAt));
+            if (previous == null || previous.kind() != kind) {
+                debugLocal("收到队友标点" + (kind == PingKind.WARNING ? "（警告）" : "")
+                        + " " + String.format(Locale.ROOT, "%.0f %.0f %.0f",
+                        marker.x(), marker.y(), marker.z())
+                        + "，剩余 " + String.format(Locale.ROOT, "%.1fs",
+                        (expiresAt - now) / 1_000.0), true);
+            }
             seen.add(marker.id());
         }
         REMOTE_PINGS.keySet().removeIf(id -> !seen.contains(id));
+        // Ids here are only needed while their marker can still show up in a snapshot; a plain bound
+        // keeps this from growing over a long session at the cost of an occasional repeat line.
+        if (DEBUG_REPORTED_DROPS.size() > 64) {
+            DEBUG_REPORTED_DROPS.clear();
+        }
     }
 
     public static void setContext(String server, String player) {
@@ -319,6 +373,7 @@ public final class PingDemo {
     private static void resetLocal() {
         ACTIVE_PINGS.clear();
         REMOTE_PINGS.clear();
+        DEBUG_REPORTED_DROPS.clear();
         // nextMarkerId deliberately keeps counting. The relay treats a repeated id as an idempotent
         // retry, so re-issuing one while the previous marker is still alive there would leave
         // teammates looking at the old position while this client shows the new one.

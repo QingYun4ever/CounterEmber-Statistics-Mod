@@ -33,6 +33,7 @@ public final class PingRelayClient {
     private static final long POLL_WAIT_MS = 10_000L;
 
     private final CeStatsConfig config;
+    private final DebugSink debugSink;
     private final PingIdentity identity = new PingIdentity();
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
@@ -55,9 +56,15 @@ public final class PingRelayClient {
     private volatile long revision;
     private volatile long nextIdentityCheck;
     private volatile Thread poller;
+    private volatile String lastRepeatedDebug;
 
     public PingRelayClient(CeStatsConfig config) {
+        this(config, null);
+    }
+
+    public PingRelayClient(CeStatsConfig config, DebugSink debugSink) {
         this.config = config;
+        this.debugSink = debugSink;
     }
 
     public void start() {
@@ -157,9 +164,22 @@ public final class PingRelayClient {
                 while (pendingPublications.size() >= 8) pendingPublications.removeFirst();
                 pendingPublications.addLast(publication);
             }
+            debug("标点 " + shortId(id) + " 只在本地：" + whyNotJoined(), false);
             return;
         }
         enqueuePublication(publication, activeChannel, activeToken);
+    }
+
+    /** Short reason a publish could not go out yet, phrased for the chat debug line. */
+    private String whyNotJoined() {
+        return switch (status().phase()) {
+            case DISABLED -> "队伍标点同步已关闭";
+            case UNPAIRED -> "设备未配对（/cestats bind）";
+            case NO_IDENTITY -> "还没识别到队伍频道（可用 /cestats ping code）";
+            case JOINING -> "正在加入频道，已排队等待重发";
+            case RETRYING -> "尚未加入频道，已排队等待重发";
+            case JOINED -> "频道状态刚刚变化，已排队等待重发";
+        };
     }
 
     public void reset() {
@@ -209,6 +229,7 @@ public final class PingRelayClient {
                         joining = false;
                         contextSignature = null;
                         lastError = describeFailure("加入频道", response.statusCode(), response.body());
+                        debug(lastError, false);
                         LOG.debug("[cestats] 标点中继加入失败 HTTP {}: {}",
                                 response.statusCode(), response.body());
                         return;
@@ -222,6 +243,7 @@ public final class PingRelayClient {
                         joined = true;
                         lastError = null;
                         pending.set(parseSnapshot(root));
+                        debug("已加入标点频道 " + shortChannel(channel) + "（" + desired.mode() + "）", true);
                         flushPendingPublications(contextSignature, channel, token);
                         startPoller(currentEpoch, channel);
                         LOG.debug("[cestats] 已加入标点频道 {}", channel);
@@ -229,6 +251,7 @@ public final class PingRelayClient {
                         joining = false;
                         contextSignature = null;
                         lastError = "加入响应无效：" + e;
+                        debug(lastError, false);
                         LOG.debug("[cestats] 标点中继加入响应无效: {}", e.toString());
                     }
                 })
@@ -236,6 +259,7 @@ public final class PingRelayClient {
                     joining = false;
                     contextSignature = null;
                     lastError = "无法连接站点：" + rootCause(error);
+                    debug(lastError, false);
                     LOG.debug("[cestats] 标点中继加入出错: {}", error.toString());
                     return null;
                 });
@@ -261,6 +285,7 @@ public final class PingRelayClient {
                 if (currentEpoch != epoch.get()) return;
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
                     lastError = describeFailure("轮询", response.statusCode(), response.body());
+                    debugRepeating(lastError);
                     LOG.debug("[cestats] 标点中继轮询失败 HTTP {}", response.statusCode());
                     break;
                 }
@@ -272,6 +297,7 @@ public final class PingRelayClient {
                 return;
             } catch (Exception e) {
                 lastError = "轮询出错：" + rootCause(e);
+                debugRepeating(lastError);
                 LOG.debug("[cestats] 标点中继轮询出错: {}", e.toString());
                 sleep(RETRY_MS);
             }
@@ -287,7 +313,11 @@ public final class PingRelayClient {
         synchronized (publicationLock) {
             while (!pendingPublications.isEmpty()) {
                 Publication publication = pendingPublications.removeFirst();
-                if (Objects.equals(publication.signature(), signature)) queued.add(publication);
+                if (Objects.equals(publication.signature(), signature)) {
+                    queued.add(publication);
+                } else {
+                    debug("标点 " + shortId(publication.id()) + " 已丢弃：频道已变化", false);
+                }
             }
         }
         for (Publication publication : queued) {
@@ -304,8 +334,11 @@ public final class PingRelayClient {
 
     private CompletableFuture<Void> sendPublication(Publication publication, String activeChannel,
                                                     String activeToken) {
+        String label = "标点 " + shortId(publication.id())
+                + ("warning".equals(publication.kind()) ? "（警告）" : "");
         if (!running || !joined || !Objects.equals(publication.signature(), contextSignature)
                 || !Objects.equals(activeChannel, channel) || !Objects.equals(activeToken, token)) {
+            debug(label + " 已丢弃：频道已变化", false);
             return CompletableFuture.completedFuture(null);
         }
         JsonObject body = new JsonObject();
@@ -325,15 +358,19 @@ public final class PingRelayClient {
         return http.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
                 .thenAccept(response -> {
                     if (response.statusCode() >= 300) {
-                        lastError = describeFailure("发布标点", response.statusCode(), response.body());
+                        lastError = describeFailure(label + " 未同步", response.statusCode(),
+                                response.body());
+                        debug(lastError, false);
                         LOG.debug("[cestats] 标点中继发布失败 HTTP {}: {}",
                                 response.statusCode(), response.body());
                     } else {
                         lastError = null;
+                        debug(label + " 已同步到频道 " + shortChannel(activeChannel), true);
                     }
                 })
                 .exceptionally(error -> {
-                    lastError = "发布标点出错：" + rootCause(error);
+                    lastError = label + " 发送出错：" + rootCause(error);
+                    debug(lastError, false);
                     LOG.debug("[cestats] 标点中继发布出错: {}", error.toString());
                     return null;
                 });
@@ -394,11 +431,44 @@ public final class PingRelayClient {
         return Math.round(value * 20.0) / 20.0;
     }
 
+    /** Emits one debug line per event when {@code pingDebug} is on. */
+    private void debug(String message, boolean ok) {
+        lastRepeatedDebug = null;
+        if (config.pingDebug && debugSink != null && message != null) {
+            debugSink.log(message, ok);
+        }
+    }
+
+    /**
+     * Same, but collapses an identical consecutive message. The poll loop retries every two seconds,
+     * and a site that stays down should not scroll the chat away.
+     */
+    private void debugRepeating(String message) {
+        if (message == null || message.equals(lastRepeatedDebug)) {
+            return;
+        }
+        lastRepeatedDebug = message;
+        if (config.pingDebug && debugSink != null) {
+            debugSink.log(message, false);
+        }
+    }
+
+    /** Trailing counter of a marker id, so debug lines can be matched to individual clicks. */
+    private static String shortId(String id) {
+        int dash = id == null ? -1 : id.lastIndexOf('-');
+        return dash < 0 || dash + 1 >= id.length() ? "#?" : "#" + id.substring(dash + 1);
+    }
+
+    /** First eight characters of a channel id — enough for teammates to compare, short enough for chat. */
+    private static String shortChannel(String value) {
+        return value == null ? "?" : value.substring(0, Math.min(8, value.length()));
+    }
+
     /** Turns a relay rejection into something a player can act on, not just an HTTP number. */
     private static String describeFailure(String action, int status, String body) {
         String code = errorCode(body);
         String hint = switch (code == null ? "" : code) {
-            case "unauthorized" -> "设备令牌无效或已被撤销，重新执行 /cestats pair <配对码>";
+            case "unauthorized" -> "设备令牌无效或已被撤销，重新执行 /cestats bind";
             case "player_mismatch" -> "当前游戏名与配对时的账号不一致";
             case "invalid_request" -> "请求被站点拒绝（格式不符）";
             case "cooldown" -> "服务端仍在冷却";
@@ -450,6 +520,11 @@ public final class PingRelayClient {
 
     private record Publication(String id, String kind, double x, double y, double z,
                                String dimension, String signature) {
+    }
+
+    /** Where per-event debug lines go. {@code ok} distinguishes a confirmed sync from a failure. */
+    public interface DebugSink {
+        void log(String message, boolean ok);
     }
 
     /** Why the relay is or is not currently syncing. */

@@ -33,4 +33,18 @@ public final class TextCompat {
     public static void openUrl(String url) {
         Util.getOperatingSystem().open(URI.create(url));
     }
+
+    /**
+     * Text that copies {@code value} to the system clipboard when clicked.
+     *
+     * <p>The bind code has to travel from the game to a QQ window, and retyping six characters is
+     * exactly where a player loses two minutes to a typo.
+     */
+    public static MutableText copyable(String label, String value, String hover) {
+        return Text.literal(label)
+                .formatted(Formatting.AQUA)
+                .styled(style -> style
+                        .withClickEvent(new ClickEvent.CopyToClipboard(value))
+                        .withHoverEvent(new HoverEvent.ShowText(Text.literal(hover))));
+    }
 }

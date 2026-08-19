@@ -66,6 +66,11 @@ public final class CeStatsConfigScreen {
                 .setTooltip(Text.literal("使用可见玩家列表和首次观测到的队伍；识别不到时可用 /cestats ping join 六位码"))
                 .setSaveConsumer(value -> config.pingAutoJoin = value)
                 .build());
+        general.addEntry(entries.startBooleanToggle(Text.literal("标点调试输出"), config.pingDebug)
+                .setDefaultValue(false)
+                .setTooltip(Text.literal("每次标点在聊天里显示一行：绿色表示中继已确认，红色写明失败原因；排查同步问题用"))
+                .setSaveConsumer(value -> config.pingDebug = value)
+                .build());
         general.addEntry(entries.startBooleanToggle(Text.literal("Flashback 自动录制"), config.flashbackAutoRecord)
                 .setDefaultValue(false)
                 .setTooltip(Text.literal("安装 Flashback 后，按 CE Stats 识别的比赛边界自动开始和结束录制；需在 Flashback 中开启 Quick Save"))
