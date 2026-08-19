@@ -18,6 +18,7 @@ public final class CeStatsConfig {
     private static final Logger LOG = LoggerFactory.getLogger("cestats");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     public static final String DEFAULT_BASE_URL = "https://ce.qingyun.best";
+    public static final String DEFAULT_API_KEY = "903f0d31c36e2f561e33376c7c37af98f841df1e1184b9d2";
 
     public boolean enabled = true;
     public boolean uploadEnabled = true;
@@ -25,7 +26,7 @@ public final class CeStatsConfig {
 
     /** Where /api/ingest lives. */
     public String apiBaseUrl = DEFAULT_BASE_URL;
-    public String apiKey = "dev-key";
+    public String apiKey = DEFAULT_API_KEY;
     /** Where the human-facing site lives; usually the same host. */
     public String webBaseUrl = DEFAULT_BASE_URL;
 

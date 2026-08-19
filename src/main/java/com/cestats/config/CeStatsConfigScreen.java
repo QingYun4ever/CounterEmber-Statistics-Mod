@@ -63,7 +63,7 @@ public final class CeStatsConfigScreen {
                 .setSaveConsumer(value -> config.webBaseUrl = value.trim())
                 .build());
         server.addEntry(entries.startStrField(Text.literal("API Key"), config.apiKey)
-                .setDefaultValue("dev-key")
+                .setDefaultValue(CeStatsConfig.DEFAULT_API_KEY)
                 .setTooltip(Text.literal("需与站点的 CESTATS_API_KEY 一致，否则上传会被拒绝"))
                 .setSaveConsumer(value -> config.apiKey = value.trim())
                 .build());

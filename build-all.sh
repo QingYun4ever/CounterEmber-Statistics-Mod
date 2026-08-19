@@ -8,12 +8,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VERSIONS=("1.21.4" "1.21.8" "1.21.11")
-GRADLE="./gradlew"
 
-# The Gradle wrapper download has been flaky here; fall back to a local distribution if present.
-if [ -x "D:/Minecraft/ce/gradle-8.14.3/bin/gradle" ] && [ "${USE_LOCAL_GRADLE:-1}" = "1" ]; then
-  GRADLE="D:/Minecraft/ce/gradle-8.14.3/bin/gradle"
-fi
+# The wrapper is the default. Loom 1.17.19 needs Gradle 9.x, so the old local 8.14.3 will not do;
+# point GRADLE at another distribution only if the wrapper download turns flaky again.
+GRADLE="${GRADLE:-./gradlew}"
 
 rm -rf dist
 mkdir -p dist
