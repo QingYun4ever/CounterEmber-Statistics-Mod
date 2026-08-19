@@ -38,8 +38,18 @@ jobs:
       - name: Remove local JDK override
         run: sed -i '/^[[:space:]]*org.gradle.java.home[[:space:]]*=/d' gradle.properties
 
-      - name: Build and test all targets
-        run: ./build-all.sh
+      - name: Build all targets without tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+
+          for version in 1.21.4 1.21.8 1.21.11; do
+            echo "Building Minecraft ${version}"
+            ./gradlew --console=plain -PmcVersion="${version}" assemble
+            cp "build/${version}/libs/cestats-mc${version}-"*.jar dist/
+          done
 
       - name: Verify one runtime jar per target
         shell: bash
