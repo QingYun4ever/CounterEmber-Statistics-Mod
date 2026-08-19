@@ -90,6 +90,10 @@ public final class PingDemo {
             applyRemoteSnapshot(client, RELAY.consumeSnapshot(), now);
         }
         commitExpiredNormal(now);
+        // Expiry runs before the click is read, so an expired marker neither occupies a slot against
+        // the cap nor gets resurrected into a warning by a double click.
+        ACTIVE_PINGS.removeIf(ping -> now >= ping.expiresAt());
+        REMOTE_PINGS.values().removeIf(ping -> now >= ping.expiresAt());
 
         // This is the default middle-mouse action. It follows the player's existing Minecraft
         // keybind for the demo; a future standalone version can expose a dedicated physical mouse
@@ -104,19 +108,15 @@ public final class PingDemo {
         if (client.world == null) {
             ACTIVE_PINGS.clear();
             REMOTE_PINGS.clear();
-            return;
         }
-
-        ACTIVE_PINGS.removeIf(ping -> now >= ping.expiresAt());
-        REMOTE_PINGS.values().removeIf(ping -> now >= ping.expiresAt());
     }
 
     /**
      * Hands the world renderer everything that should be on screen right now, local markers first.
      *
-     * <p>Called once per frame on the render thread, which is why it fills a caller-owned list
-     * instead of allocating: the tick thread only ever mutates these collections, so a copy here is
-     * both cheap and enough to keep the renderer off them.</p>
+     * <p>The client tick and the world render run on the same thread, so this is not a safety copy —
+     * it just flattens the two collections into the single list the renderer iterates, without
+     * allocating one per frame.</p>
      */
     static void collectMarkers(List<PingMarker> out) {
         out.addAll(ACTIVE_PINGS);
@@ -223,44 +223,6 @@ public final class PingDemo {
         return owner + "-" + SESSION_NONCE + "-" + (++nextMarkerId);
     }
 
-    private static void emitMarker(ClientWorld world, LocalPing ping, long now) {
-        double age = (now - ping.createdAt()) / 1_000.0;
-        double pulse = 1.0 + Math.sin(age * (ping.kind() == PingKind.WARNING ? 7.0 : 5.0)) * 0.10;
-        double radius = (ping.kind() == PingKind.WARNING ? 0.62 : 0.46) * pulse;
-        double y = ping.position().y;
-        DustParticleEffect particle = ping.kind() == PingKind.WARNING
-                ? WARNING_PARTICLE
-                : NORMAL_PARTICLE;
-
-        int ringPoints = ping.kind() == PingKind.WARNING ? 8 : 6;
-        for (int i = 0; i < ringPoints; i++) {
-            double angle = (Math.PI * 2.0 * i / ringPoints) + age * 0.7;
-            spawn(world,
-                    ping.position().x + Math.cos(angle) * radius,
-                    y,
-                    ping.position().z + Math.sin(angle) * radius,
-                    particle);
-        }
-
-        // A short vertical pointer makes the marker readable even when the ground ring is partly
-        // occluded by grass or uneven terrain.
-        int beamPoints = ping.kind() == PingKind.WARNING ? 3 : 2;
-        for (int i = 0; i < beamPoints; i++) {
-            double beamY = y + 0.12 + i * 0.22;
-            spawn(world, ping.position().x, beamY, ping.position().z, particle);
-        }
-
-        if (ping.kind() == PingKind.WARNING && ((now / 180L) & 1L) == 0L) {
-            spawn(world, ping.position().x, y + 1.65, ping.position().z,
-                    WARNING_ACCENT_PARTICLE);
-        }
-    }
-
-    private static void spawn(ClientWorld world, double x, double y, double z,
-                              DustParticleEffect particle) {
-        ParticleCompat.spawn(world, particle, x, y, z, 0.0, 0.0, 0.0);
-    }
-
     private static void showOverlay(MinecraftClient client, Text message) {
         InGameHud hud = client.inGameHud;
         if (hud != null) {
@@ -305,7 +267,7 @@ public final class PingDemo {
                 continue;
             }
             PingKind kind = "warning".equals(marker.kind()) ? PingKind.WARNING : PingKind.NORMAL;
-            LocalPing previous = REMOTE_PINGS.put(marker.id(), new LocalPing(marker.id(),
+            PingMarker previous = REMOTE_PINGS.put(marker.id(), new PingMarker(marker.id(),
                     new Vec3d(marker.x(), marker.y(), marker.z()), kind,
                     Math.min(marker.createdAt(), now), expiresAt));
             if (previous == null || previous.kind() != kind) {
@@ -365,16 +327,7 @@ public final class PingDemo {
         // nextMarkerId deliberately keeps counting. The relay treats a repeated id as an idempotent
         // retry, so re-issuing one while the previous marker is still alive there would leave
         // teammates looking at the old position while this client shows the new one.
-        lastParticleEmitAt = Long.MIN_VALUE;
         CLICK_DETECTOR.reset();
         POLICY.reset();
-    }
-
-    private record LocalPing(String id, Vec3d position, PingKind kind, long createdAt, long expiresAt) {
-    }
-
-    private enum PingKind {
-        NORMAL,
-        WARNING
     }
 }

@@ -9,6 +9,7 @@ import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.Vec3d;
+import org.joml.Quaternionf;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -47,8 +48,12 @@ public final class PingMarkerRenderer implements WorldMarkerDrawer {
     private static final double NORMAL_ANGULAR_SIZE = 0.014;
     /** Warnings are drawn deliberately larger so the two kinds are distinguishable at a glance. */
     private static final double WARNING_ANGULAR_SIZE = 0.017;
-    /** Below this the marker stops shrinking, so standing on top of a ping still shows something. */
-    private static final double MIN_WORLD_SIZE = 0.10;
+    /**
+     * Purely a guard against degenerate geometry when the camera is practically inside the marker.
+     * There is deliberately no useful lower bound above it: pure angular scaling is what keeps the
+     * marker the same size on screen whether it is two blocks away or three hundred.
+     */
+    private static final double MIN_WORLD_SIZE = 0.02;
 
     /** A short overshoot on spawn; the same cue CS2 uses to make a new ping catch the eye. */
     private static final long POP_IN_MS = 160L;
@@ -76,6 +81,13 @@ public final class PingMarkerRenderer implements WorldMarkerDrawer {
     private static final int PLATE_ALPHA = 80;
     private static final int GLOW_ALPHA = 55;
     private static final int SOLID_ALPHA = 240;
+    /**
+     * The see-through layer's fragment shader ends with {@code if (color.a < 0.1) discard;}, so 26/255
+     * is the lowest alpha that still draws anything. Fading has to stop here rather than at zero:
+     * below it a pass does not dim, it vanishes, and since each pass starts from a different alpha
+     * they would cross the cutoff at different moments and the marker would come apart on the way out.
+     */
+    private static final int MIN_VISIBLE_ALPHA = 26;
 
     /** Diamond corner directions, counted so that consecutive entries share an edge. */
     private static final float[] CORNER_X = {0.0F, 1.0F, 0.0F, -1.0F};
@@ -103,7 +115,7 @@ public final class PingMarkerRenderer implements WorldMarkerDrawer {
         }
         // The same quaternion vanilla uses to face a nameplate at the camera. Multiplying it in makes
         // local +X screen-right and local +Y screen-up, which is what every offset above assumes.
-        var rotation = client.gameRenderer.getCamera().getRotation();
+        Quaternionf rotation = client.gameRenderer.getCamera().getRotation();
 
         long now = System.currentTimeMillis();
         VertexConsumer buffer = consumers.getBuffer(layer);
@@ -114,7 +126,7 @@ public final class PingMarkerRenderer implements WorldMarkerDrawer {
     }
 
     private static void drawMarker(MatrixStack matrices, VertexConsumer buffer,
-                                   org.joml.Quaternionf rotation, Vec3d cameraPos,
+                                   Quaternionf rotation, Vec3d cameraPos,
                                    PingMarker marker, long now) {
         long remaining = marker.expiresAt() - now;
         if (remaining <= 0L) {
@@ -167,8 +179,16 @@ public final class PingMarkerRenderer implements WorldMarkerDrawer {
         matrices.pop();
     }
 
+    /**
+     * Fades {@code base} towards {@link #MIN_VISIBLE_ALPHA} instead of towards zero, so the whole
+     * marker dims as one piece and then disappears when its lifetime ends, rather than shedding its
+     * dimmest pass first.
+     */
     private static int alpha(int base, float fade) {
-        return Math.max(1, Math.round(base * fade));
+        if (base <= MIN_VISIBLE_ALPHA) {
+            return base;
+        }
+        return MIN_VISIBLE_ALPHA + Math.round((base - MIN_VISIBLE_ALPHA) * fade);
     }
 
     private static double square(double value) {
