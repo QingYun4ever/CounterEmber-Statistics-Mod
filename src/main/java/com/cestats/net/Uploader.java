@@ -18,7 +18,8 @@ import java.util.function.Consumer;
  *
  * <p>The queue is disk-backed ({@link MatchStore}), so nothing is lost if the site is down, the
  * game crashes, or the player quits mid-retry. Retries back off and never give up on transient
- * failures; only a 400 (payload the server refuses to parse) is treated as permanent.
+ * failures; malformed payloads and revoked credentials are treated as permanent for the current
+ * queue pass and remain in the local archive for a later manual retry.
  */
 public final class Uploader {
 
@@ -93,7 +94,7 @@ public final class Uploader {
                 return;
             }
 
-            if (!config.enabled || !config.uploadEnabled) {
+            if (!config.enabled || !config.uploadEnabled || !config.isPaired()) {
                 queue.offerFirst(matchId);
                 sleep(30_000L);
                 continue;
@@ -126,7 +127,7 @@ public final class Uploader {
             HttpRequest request = HttpRequest.newBuilder(URI.create(config.ingestUrl()))
                     .timeout(Duration.ofSeconds(20))
                     .header("content-type", "application/json")
-                    .header("x-api-key", config.apiKey == null ? "" : config.apiKey)
+                    .header("authorization", "Bearer " + config.deviceToken)
                     .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
                     .build();
 
@@ -150,7 +151,10 @@ public final class Uploader {
 
             LOG.warn("[cestats] 上传 {} 失败：HTTP {}，稍后重试", matchId, code);
             if (code == 401 || code == 403) {
-                onResult.accept(new Result(matchId, false, "API Key 无效，请用 /cestats key 设置", null));
+                // Leave the archive pending, but stop hammering a revoked/unpaired token. The pair
+                // command requeues pending archives after a new token is stored.
+                onResult.accept(new Result(matchId, false, "设备令牌无效，请执行 /cestats pair <配对码>", null));
+                return new Outcome(true);
             }
             return new Outcome(false);
         } catch (Exception e) {

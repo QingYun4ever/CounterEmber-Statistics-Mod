@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 
 /** Plain JSON config at {@code .minecraft/config/cestats.json}. */
 public final class CeStatsConfig {
@@ -18,17 +19,27 @@ public final class CeStatsConfig {
     private static final Logger LOG = LoggerFactory.getLogger("cestats");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     public static final String DEFAULT_BASE_URL = "https://ce.qingyun.best";
-    public static final String DEFAULT_API_KEY = "903f0d31c36e2f561e33376c7c37af98f841df1e1184b9d2";
 
     public boolean enabled = true;
     public boolean uploadEnabled = true;
     public boolean notifyOnMatchEnd = true;
+    /** Enable the optional client-to-site team ping relay. */
+    public boolean pingEnabled = true;
+    /** Automatically use the visible roster and first observed side for relay channel discovery. */
+    public boolean pingAutoJoin = true;
+    /** Volatile team code; kept in memory by commands and not written to disk. */
+    public transient String pingTeamCode;
     /** Automatically start/finish a Flashback replay around parsed matches when Flashback exists. */
     public boolean flashbackAutoRecord = false;
 
-    /** Where /api/ingest lives. */
+    /** Where /api/ingest and /api/pair live. */
     public String apiBaseUrl = DEFAULT_BASE_URL;
-    public String apiKey = DEFAULT_API_KEY;
+    /** Random installation identifier used when redeeming a one-time pairing code. */
+    public String installId = "";
+    /** Per-installation token returned by /api/pair; never shipped as a default. */
+    public String deviceToken = "";
+    /** Player name bound to the current device token, for display and payload checks. */
+    public String pairedPlayer = "";
     /** Where the human-facing site lives; usually the same host. */
     public String webBaseUrl = DEFAULT_BASE_URL;
 
@@ -47,6 +58,15 @@ public final class CeStatsConfig {
             } catch (IOException | JsonSyntaxException e) {
                 LOG.warn("[cestats] 配置读取失败，使用默认值: {}", e.toString());
             }
+        }
+        if (config.installId == null || config.installId.isBlank()) {
+            config.installId = UUID.randomUUID().toString();
+        }
+        if (config.deviceToken == null) {
+            config.deviceToken = "";
+        }
+        if (config.pairedPlayer == null) {
+            config.pairedPlayer = "";
         }
         config.path = path;
         config.save();
@@ -67,6 +87,34 @@ public final class CeStatsConfig {
 
     public String ingestUrl() {
         return trimSlash(apiBaseUrl) + "/api/ingest";
+    }
+
+    public String pairUrl() {
+        return trimSlash(apiBaseUrl) + "/api/pair";
+    }
+
+    public boolean isPaired() {
+        return deviceToken != null && !deviceToken.isBlank();
+    }
+
+    public void clearPairing() {
+        deviceToken = "";
+        pairedPlayer = "";
+        save();
+    }
+
+    public String pingJoinUrl() {
+        return trimSlash(apiBaseUrl) + "/api/ping/join";
+    }
+
+    public String pingPublishUrl() {
+        return trimSlash(apiBaseUrl) + "/api/ping/publish";
+    }
+
+    public String pingStateUrl(String channel, String token, long revision, long waitMs) {
+        return trimSlash(apiBaseUrl) + "/api/ping/state?channel=" + channel
+                + "&token=" + java.net.URLEncoder.encode(token, java.nio.charset.StandardCharsets.UTF_8)
+                + "&since=" + revision + "&wait=" + waitMs;
     }
 
     public String matchUrl(String matchId) {

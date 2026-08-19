@@ -47,15 +47,19 @@ public final class CeStatsClient implements ClientModInitializer {
                 notifier.uploadResult(result.matchId(), result.ok(), result.message()));
         recordingController = new MatchRecordingController(new FlashbackBridge(),
                 config.enabled && config.flashbackAutoRecord);
-        tracker = new MatchTracker(CeStatsClient::onMatchFinished, recordingController::accept);
+        tracker = new MatchTracker(CeStatsClient::onMatchFinished, event -> {
+            recordingController.accept(event);
+            PingDemo.accept(event);
+        });
         uploader.start();
-        PingDemo.register();
+        PingDemo.register(config);
 
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             if (overlay || !config.enabled) {
                 return;
             }
             try {
+                PingDemo.acceptChatText(message.getString());
                 tracker.accept(message.getString(), System.currentTimeMillis());
             } catch (Exception e) {
                 LOG.error("[cestats] 解析聊天消息时出错", e);
@@ -68,13 +72,14 @@ public final class CeStatsClient implements ClientModInitializer {
             String user = client.getSession().getUsername();
             tracker.setContext(server, user);
             tracker.reset();
-            PingDemo.reset();
+            PingDemo.setContext(server, user);
             LOG.info("[cestats] 已连接 {}，本地玩家 {}", server, user);
         });
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             recordingController.onDisconnect();
             tracker.reset();
+            PingDemo.reset();
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {

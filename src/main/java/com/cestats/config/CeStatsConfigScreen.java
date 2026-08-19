@@ -1,6 +1,7 @@
 package com.cestats.config;
 
 import com.cestats.CeStatsClient;
+import com.cestats.ping.PingDemo;
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
 import me.shedaniel.clothconfig2.api.ConfigCategory;
 import me.shedaniel.clothconfig2.api.ConfigEntryBuilder;
@@ -26,7 +27,7 @@ public final class CeStatsConfigScreen {
                 .setTitle(Text.literal("CE Stats"))
                 .setSavingRunnable(() -> {
                     config.save();
-                    // A corrected key or URL should immediately retry whatever is still queued.
+                    // A corrected URL or newly completed pairing should immediately retry queued data.
                     if (CeStatsClient.uploader() != null) {
                         CeStatsClient.uploader().requeuePending();
                     }
@@ -34,6 +35,7 @@ public final class CeStatsConfigScreen {
                         CeStatsClient.recordingController().setEnabled(
                                 config.enabled && config.flashbackAutoRecord);
                     }
+                    PingDemo.reset();
                 });
 
         ConfigEntryBuilder entries = builder.entryBuilder();
@@ -54,6 +56,16 @@ public final class CeStatsConfigScreen {
                 .setTooltip(Text.literal("比赛结算后在聊天框显示本场数据和查看链接"))
                 .setSaveConsumer(value -> config.notifyOnMatchEnd = value)
                 .build());
+        general.addEntry(entries.startBooleanToggle(Text.literal("队伍标点同步"), config.pingEnabled)
+                .setDefaultValue(true)
+                .setTooltip(Text.literal("通过统计站点的短时中继，让同局同队的客户端看到标点；不写入比赛数据库"))
+                .setSaveConsumer(value -> config.pingEnabled = value)
+                .build());
+        general.addEntry(entries.startBooleanToggle(Text.literal("自动识别标点频道"), config.pingAutoJoin)
+                .setDefaultValue(true)
+                .setTooltip(Text.literal("使用可见玩家列表和首次观测到的队伍；识别不到时可用 /cestats ping join 六位码"))
+                .setSaveConsumer(value -> config.pingAutoJoin = value)
+                .build());
         general.addEntry(entries.startBooleanToggle(Text.literal("Flashback 自动录制"), config.flashbackAutoRecord)
                 .setDefaultValue(false)
                 .setTooltip(Text.literal("安装 Flashback 后，按 CE Stats 识别的比赛边界自动开始和结束录制；需在 Flashback 中开启 Quick Save"))
@@ -63,7 +75,7 @@ public final class CeStatsConfigScreen {
         ConfigCategory server = builder.getOrCreateCategory(Text.literal("服务器"));
         server.addEntry(entries.startStrField(Text.literal("接口地址"), config.apiBaseUrl)
                 .setDefaultValue(CeStatsConfig.DEFAULT_BASE_URL)
-                .setTooltip(Text.literal("统计站点的根地址，比赛会 POST 到 <地址>/api/ingest"))
+                .setTooltip(Text.literal("统计站点的根地址，比赛会 POST 到 <地址>/api/ingest 和 <地址>/api/ping/*"))
                 .setSaveConsumer(value -> config.apiBaseUrl = value.trim())
                 .build());
         server.addEntry(entries.startStrField(Text.literal("网页地址"), config.webBaseUrl)
@@ -71,12 +83,6 @@ public final class CeStatsConfigScreen {
                 .setTooltip(Text.literal("聊天里「查看详情」打开的地址，通常和接口地址相同"))
                 .setSaveConsumer(value -> config.webBaseUrl = value.trim())
                 .build());
-        server.addEntry(entries.startStrField(Text.literal("API Key"), config.apiKey)
-                .setDefaultValue(CeStatsConfig.DEFAULT_API_KEY)
-                .setTooltip(Text.literal("需与站点的 CESTATS_API_KEY 一致，否则上传会被拒绝"))
-                .setSaveConsumer(value -> config.apiKey = value.trim())
-                .build());
-
         return builder.build();
     }
 }

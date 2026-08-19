@@ -2,7 +2,11 @@ package com.cestats;
 
 import com.cestats.compat.TextCompat;
 import com.cestats.config.CeStatsConfig;
+import com.cestats.net.PairingClient;
+import com.cestats.ping.PingDemo;
 import com.mojang.brigadier.arguments.StringArgumentType;
+
+import java.util.concurrent.ThreadLocalRandom;
 import com.mojang.brigadier.context.CommandContext;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -27,15 +31,26 @@ public final class CeStatsCommand {
                         .then(ClientCommandManager.literal("open").executes(ctx ->
                                 openUrl(ctx, CeStatsClient.config().webBaseUrl)))
                         .then(ClientCommandManager.literal("last").executes(CeStatsCommand::last))
+                        .then(ClientCommandManager.literal("ping")
+                                .executes(CeStatsCommand::pingStatus)
+                                .then(ClientCommandManager.literal("code")
+                                        .executes(CeStatsCommand::newPingCode))
+                                .then(ClientCommandManager.literal("join")
+                                        .then(ClientCommandManager.argument("code", StringArgumentType.word())
+                                                .executes(CeStatsCommand::joinPingCode)))
+                                .then(ClientCommandManager.literal("leave")
+                                        .executes(CeStatsCommand::leavePingCode)))
                         .then(ClientCommandManager.literal("url")
                                 .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
                                         .executes(ctx -> setUrl(ctx, false))))
                         .then(ClientCommandManager.literal("web")
                                 .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
                                         .executes(ctx -> setUrl(ctx, true))))
-                        .then(ClientCommandManager.literal("key")
-                                .then(ClientCommandManager.argument("value", StringArgumentType.greedyString())
-                                        .executes(CeStatsCommand::setKey)))));
+                        .then(ClientCommandManager.literal("pair")
+                                .then(ClientCommandManager.argument("code", StringArgumentType.word())
+                                        .executes(CeStatsCommand::pair)))
+                        .then(ClientCommandManager.literal("unpair")
+                                .executes(CeStatsCommand::unpair))));
     }
 
     private static int status(CommandContext<FabricClientCommandSource> ctx) {
@@ -50,9 +65,13 @@ public final class CeStatsCommand {
                     ? "已检测" : "未安装或接口不兼容"));
         }
         source.sendFeedback(row("接口", config.ingestUrl()));
+        source.sendFeedback(row("上传身份", config.isPaired()
+                ? "已配对（" + config.pairedPlayer + "）"
+                : "未配对（/cestats pair <配对码>）"));
         source.sendFeedback(row("网页", config.webBaseUrl));
         source.sendFeedback(row("本地存档", CeStatsClient.store().archivedCount() + " 场"));
         source.sendFeedback(row("待上传", CeStatsClient.uploader().queueSize() + " 场"));
+        source.sendFeedback(row("标点中继", pingStatusText()));
         source.sendFeedback(row("数据目录", CeStatsClient.store().root().toString()));
         return 1;
     }
@@ -80,6 +99,50 @@ public final class CeStatsCommand {
         ctx.getSource().sendFeedback(head(config.flashbackAutoRecord
                 ? "已开启 Flashback 自动录制" : "已关闭 Flashback 自动录制"));
         return 1;
+    }
+
+    private static int pingStatus(CommandContext<FabricClientCommandSource> ctx) {
+        ctx.getSource().sendFeedback(head("标点中继 " + pingStatusText()));
+        String code = CeStatsClient.config().pingTeamCode;
+        if (code != null && !code.isBlank()) {
+            ctx.getSource().sendFeedback(row("队伍码", code));
+        } else {
+            ctx.getSource().sendFeedback(row("队伍码", "未设置（等待自动识别）"));
+        }
+        return 1;
+    }
+
+    private static int newPingCode(CommandContext<FabricClientCommandSource> ctx) {
+        String code = String.format("%06d", ThreadLocalRandom.current().nextInt(100000, 1_000_000));
+        CeStatsClient.config().pingTeamCode = code;
+        PingDemo.reset();
+        ctx.getSource().sendFeedback(head("新的标点队伍码：" + code));
+        ctx.getSource().sendFeedback(row("队友加入", "/cestats ping join " + code));
+        return 1;
+    }
+
+    private static int joinPingCode(CommandContext<FabricClientCommandSource> ctx) {
+        String code = StringArgumentType.getString(ctx, "code").trim();
+        if (!code.matches("\\d{6}")) {
+            ctx.getSource().sendError(Text.literal("队伍码必须是六位数字"));
+            return 0;
+        }
+        CeStatsClient.config().pingTeamCode = code;
+        PingDemo.reset();
+        ctx.getSource().sendFeedback(head("已加入标点队伍频道 " + code));
+        return 1;
+    }
+
+    private static int leavePingCode(CommandContext<FabricClientCommandSource> ctx) {
+        CeStatsClient.config().pingTeamCode = null;
+        PingDemo.reset();
+        ctx.getSource().sendFeedback(head("已退出手动标点队伍频道，将尝试自动识别"));
+        return 1;
+    }
+
+    private static String pingStatusText() {
+        if (!CeStatsClient.config().pingEnabled) return "已关闭";
+        return "已开启";
     }
 
     private static int retry(CommandContext<FabricClientCommandSource> ctx) {
@@ -124,12 +187,31 @@ public final class CeStatsCommand {
         return 1;
     }
 
-    private static int setKey(CommandContext<FabricClientCommandSource> ctx) {
+    private static int pair(CommandContext<FabricClientCommandSource> ctx) {
+        String code = StringArgumentType.getString(ctx, "code").trim();
+        if (!code.matches("[A-Fa-f0-9]{16}")) {
+            ctx.getSource().sendError(Text.literal("配对码必须是 16 位十六进制字符"));
+            return 0;
+        }
+
         CeStatsConfig config = CeStatsClient.config();
-        config.apiKey = StringArgumentType.getString(ctx, "value").trim();
-        config.save();
-        CeStatsClient.uploader().requeuePending();
-        ctx.getSource().sendFeedback(head("API Key 已保存，待传比赛已重新排队"));
+        String player = CeStatsClient.client().getSession().getUsername();
+        ctx.getSource().sendFeedback(head("正在请求配对，请稍候…"));
+        PairingClient.pair(config, code, player, result -> CeStatsClient.client().execute(() -> {
+            if (result.ok()) {
+                CeStatsClient.uploader().requeuePending();
+                ctx.getSource().sendFeedback(head(result.message()));
+            } else {
+                ctx.getSource().sendError(Text.literal(result.message()));
+            }
+        }));
+        return 1;
+    }
+
+    private static int unpair(CommandContext<FabricClientCommandSource> ctx) {
+        CeStatsClient.config().clearPairing();
+        PingDemo.reset();
+        ctx.getSource().sendFeedback(head("已解除设备配对；待上传数据会保留，重新配对后可继续上传"));
         return 1;
     }
 

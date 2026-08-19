@@ -1,48 +1,63 @@
 package com.cestats.ping;
 
 import com.cestats.compat.ParticleCompat;
+import com.cestats.config.CeStatsConfig;
+import com.cestats.parse.ChatEvent;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.hud.InGameHud;
 import net.minecraft.client.world.ClientWorld;
-import net.minecraft.entity.Entity;
 import net.minecraft.particle.DustParticleEffect;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Vec3d;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import net.minecraft.world.RaycastContext;
 
 /**
- * A deliberately local-only ping prototype.
+ * CS2-style client marker demo with an optional, short-lived team relay.
  *
  * <p>It uses the vanilla pick-item binding (middle mouse by default), so a click is consumed at
- * the start of the client tick before vanilla creative pick-block handling. No packet, payload, or
- * server-side state is involved yet.</p>
+ * the start of the client tick before vanilla creative pick-block handling. The target is a
+ * straight 64-block ray, with a three-marker cap and a short cooldown. Rendering remains local;
+ * the optional relay only forwards quantized coordinates and expiry metadata.</p>
  */
 public final class PingDemo {
 
     private static final long NORMAL_LIFETIME_MS = 4_000L;
     private static final long WARNING_LIFETIME_MS = 5_000L;
+    private static final long PARTICLE_INTERVAL_MS = 220L;
     private static final double MAX_PING_DISTANCE = 64.0;
 
     private static final DustParticleEffect NORMAL_PARTICLE =
-            new DustParticleEffect(0x29E6E8, 0.72F);
+            new DustParticleEffect(0x29E6E8, 0.58F);
     private static final DustParticleEffect WARNING_PARTICLE =
-            new DustParticleEffect(0xFF3045, 0.86F);
+            new DustParticleEffect(0xFF3045, 0.68F);
     private static final DustParticleEffect WARNING_ACCENT_PARTICLE =
-            new DustParticleEffect(0xFFD23F, 0.68F);
+            new DustParticleEffect(0xFFD23F, 0.56F);
 
     private static final PingClickDetector CLICK_DETECTOR = new PingClickDetector();
     private static final PingPolicy POLICY = new PingPolicy();
     private static final java.util.ArrayList<LocalPing> ACTIVE_PINGS = new java.util.ArrayList<>();
+    private static final Map<String, LocalPing> REMOTE_PINGS = new HashMap<>();
+    private static PingRelayClient RELAY;
+    private static long nextMarkerId;
+    private static long lastParticleEmitAt = Long.MIN_VALUE;
 
     private PingDemo() {
     }
 
-    public static void register() {
+    public static void register(CeStatsConfig config) {
+        RELAY = new PingRelayClient(config);
+        RELAY.start();
         // START is intentional: consuming pickItemKey.wasPressed() here prevents the same middle
         // click from also being handled as creative pick-block by vanilla later in the tick.
         ClientTickEvents.START_CLIENT_TICK.register(PingDemo::onClientTick);
@@ -51,7 +66,15 @@ public final class PingDemo {
 
     private static void onClientTick(MinecraftClient client) {
         long now = System.currentTimeMillis();
+        if (RELAY != null) {
+            RELAY.tick(client);
+            applyRemoteSnapshot(client, RELAY.consumeSnapshot(), now);
+        }
         commitExpiredNormal(now);
+        if (client.world != null) {
+            ACTIVE_PINGS.removeIf(ping -> now >= ping.expiresAt());
+            REMOTE_PINGS.values().removeIf(ping -> now >= ping.expiresAt());
+        }
 
         // This is the default middle-mouse action. It follows the player's existing Minecraft
         // keybind for the demo; a future standalone version can expose a dedicated physical mouse
@@ -65,29 +88,42 @@ public final class PingDemo {
 
         if (client.world == null) {
             ACTIVE_PINGS.clear();
+            REMOTE_PINGS.clear();
             return;
         }
 
         ACTIVE_PINGS.removeIf(ping -> now >= ping.expiresAt());
+        REMOTE_PINGS.values().removeIf(ping -> now >= ping.expiresAt());
+        if (ACTIVE_PINGS.isEmpty() && REMOTE_PINGS.isEmpty()
+                || (lastParticleEmitAt != Long.MIN_VALUE
+                && now - lastParticleEmitAt < PARTICLE_INTERVAL_MS)) {
+            return;
+        }
+        lastParticleEmitAt = now;
         for (LocalPing ping : ACTIVE_PINGS) {
+            emitMarker(client.world, ping, now);
+        }
+        for (LocalPing ping : REMOTE_PINGS.values()) {
             emitMarker(client.world, ping, now);
         }
     }
 
     private static void placeFromCrosshair(MinecraftClient client, long now) {
-        HitResult target = resolvePingTarget(client);
-        if (target == null) {
+        Vec3d position = resolvePingPosition(client);
+        if (position == null) {
             CLICK_DETECTOR.reset();
-            showOverlay(client, Text.literal("标点失败：超出距离").formatted(Formatting.GRAY));
+            showOverlay(client, Text.literal("标点失败：无法取得准星位置").formatted(Formatting.GRAY));
             return;
         }
 
-        Vec3d position = markerPosition(target);
         PingClickDetector.ClickResult click = CLICK_DETECTOR.registerClick(now);
         if (click == PingClickDetector.ClickResult.WARNING) {
             if (!ACTIVE_PINGS.isEmpty()) {
-                ACTIVE_PINGS.set(ACTIVE_PINGS.size() - 1,
-                        new LocalPing(position, PingKind.WARNING, now, now + WARNING_LIFETIME_MS));
+                LocalPing previous = ACTIVE_PINGS.get(ACTIVE_PINGS.size() - 1);
+                LocalPing warning = new LocalPing(previous.id(), position, PingKind.WARNING, now,
+                        now + WARNING_LIFETIME_MS);
+                ACTIVE_PINGS.set(ACTIVE_PINGS.size() - 1, warning);
+                publish(warning);
                 POLICY.acceptWarning(now);
                 showOverlay(client, Text.literal("⚠ 警告标点").formatted(Formatting.RED));
             } else {
@@ -101,22 +137,26 @@ public final class PingDemo {
         PingPolicy.Decision decision = POLICY.tryAcceptNormal(now, ACTIVE_PINGS.size());
         if (decision == PingPolicy.Decision.COOLDOWN) {
             CLICK_DETECTOR.reset();
-            showOverlay(client, Text.literal("标点冷却中").formatted(Formatting.YELLOW));
+            double seconds = POLICY.cooldownRemainingMs(now) / 1_000.0;
+            showOverlay(client, Text.literal(String.format(Locale.ROOT, "标点冷却中 %.1fs", seconds))
+                    .formatted(Formatting.YELLOW));
             return;
         }
         if (decision == PingPolicy.Decision.LIMIT_REACHED) {
             CLICK_DETECTOR.reset();
-            showOverlay(client, Text.literal("标点已达到上限（3 个）")
+            showOverlay(client, Text.literal("标点已达到上限（" + POLICY.maxActivePings() + " 个）")
                     .formatted(Formatting.YELLOW));
             return;
         }
 
-        ACTIVE_PINGS.add(new LocalPing(position, PingKind.NORMAL, now,
-                now + NORMAL_LIFETIME_MS));
+        LocalPing ping = new LocalPing(newMarkerId(), position, PingKind.NORMAL, now,
+                now + NORMAL_LIFETIME_MS);
+        ACTIVE_PINGS.add(ping);
+        publish(ping);
         showOverlay(client, Text.literal("◎ 标点").formatted(Formatting.AQUA));
     }
 
-    private static HitResult resolvePingTarget(MinecraftClient client) {
+    private static Vec3d resolvePingPosition(MinecraftClient client) {
         if (client.player == null || client.world == null) {
             return null;
         }
@@ -128,18 +168,13 @@ public final class PingDemo {
                 start, end, RaycastContext.ShapeType.OUTLINE,
                 RaycastContext.FluidHandling.NONE, client.player));
         if (blockOrFluid.getType() != HitResult.Type.MISS) {
-            return blockOrFluid;
+            return markerPosition(blockOrFluid);
         }
 
         // No block is required: on open space the marker is placed at the maximum ray distance.
         // Entity targeting is intentionally not added to this prototype; the straight ray point
         // keeps the behavior deterministic and local.
-        return new HitResult(end) {
-            @Override
-            public Type getType() {
-                return Type.MISS;
-            }
-        };
+        return end;
     }
 
     private static Vec3d markerPosition(HitResult target) {
@@ -151,6 +186,24 @@ public final class PingDemo {
         return target.getPos().add(0.0, 0.06, 0.0);
     }
 
+    private static void publish(LocalPing ping) {
+        if (RELAY != null) {
+            RELAY.publish(ping.id(), ping.kind() == PingKind.WARNING ? "warning" : "normal",
+                    ping.position().x, ping.position().y, ping.position().z,
+                    "" + pingDimension());
+        }
+    }
+
+    private static String pingDimension() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        return client.world == null ? "unknown" : client.world.getRegistryKey().getValue().toString();
+    }
+
+    private static String newMarkerId() {
+        String owner = RELAY == null ? "local" : RELAY.ownerId();
+        return owner + "-" + (++nextMarkerId);
+    }
+
     private static void emitMarker(ClientWorld world, LocalPing ping, long now) {
         double age = (now - ping.createdAt()) / 1_000.0;
         double pulse = 1.0 + Math.sin(age * (ping.kind() == PingKind.WARNING ? 7.0 : 5.0)) * 0.10;
@@ -160,7 +213,7 @@ public final class PingDemo {
                 ? WARNING_PARTICLE
                 : NORMAL_PARTICLE;
 
-        int ringPoints = ping.kind() == PingKind.WARNING ? 10 : 7;
+        int ringPoints = ping.kind() == PingKind.WARNING ? 8 : 6;
         for (int i = 0; i < ringPoints; i++) {
             double angle = (Math.PI * 2.0 * i / ringPoints) + age * 0.7;
             spawn(world,
@@ -172,7 +225,7 @@ public final class PingDemo {
 
         // A short vertical pointer makes the marker readable even when the ground ring is partly
         // occluded by grass or uneven terrain.
-        int beamPoints = ping.kind() == PingKind.WARNING ? 4 : 3;
+        int beamPoints = ping.kind() == PingKind.WARNING ? 3 : 2;
         for (int i = 0; i < beamPoints; i++) {
             double beamY = y + 0.12 + i * 0.22;
             spawn(world, ping.position().x, beamY, ping.position().z, particle);
@@ -206,13 +259,54 @@ public final class PingDemo {
         CLICK_DETECTOR.commitPending();
     }
 
+    private static void applyRemoteSnapshot(MinecraftClient client,
+                                             PingRelayClient.Snapshot snapshot, long now) {
+        if (snapshot == null || client.world == null) return;
+        Set<String> seen = new HashSet<>();
+        String owner = RELAY == null ? "" : RELAY.ownerId();
+        String dimension = client.world.getRegistryKey().getValue().toString();
+        for (PingRelayClient.Marker marker : snapshot.markers()) {
+            if (marker.owner().equals(owner) || !marker.dimension().equals(dimension)
+                    || now >= marker.expiresAt()) continue;
+            PingKind kind = "warning".equals(marker.kind()) ? PingKind.WARNING : PingKind.NORMAL;
+            REMOTE_PINGS.put(marker.id(), new LocalPing(marker.id(),
+                    new Vec3d(marker.x(), marker.y(), marker.z()), kind,
+                    marker.createdAt(), marker.expiresAt()));
+            seen.add(marker.id());
+        }
+        REMOTE_PINGS.keySet().removeIf(id -> !seen.contains(id));
+    }
+
+    public static void setContext(String server, String player) {
+        if (RELAY != null) RELAY.setContext(server, player);
+        resetLocal();
+    }
+
+    public static void accept(ChatEvent event) {
+        if (RELAY != null) RELAY.accept(event);
+    }
+
+    public static void acceptChatText(String content) {
+        // The identity object is intentionally private to the relay client; chat text is forwarded
+        // through a small method so the automatic side probe can use [ALL] [CT/T] prefixes.
+        if (RELAY != null) RELAY.acceptChatText(content);
+    }
+
     public static void reset() {
+        if (RELAY != null) RELAY.reset();
+        resetLocal();
+    }
+
+    private static void resetLocal() {
         ACTIVE_PINGS.clear();
+        REMOTE_PINGS.clear();
+        nextMarkerId = 0L;
+        lastParticleEmitAt = Long.MIN_VALUE;
         CLICK_DETECTOR.reset();
         POLICY.reset();
     }
 
-    private record LocalPing(Vec3d position, PingKind kind, long createdAt, long expiresAt) {
+    private record LocalPing(String id, Vec3d position, PingKind kind, long createdAt, long expiresAt) {
     }
 
     private enum PingKind {

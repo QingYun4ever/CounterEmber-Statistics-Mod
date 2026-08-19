@@ -31,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Checks the uploaded payload against the shape {@code /api/ingest} validates, and writes each
  * match to {@code build/wire/} so the real endpoint can be exercised with them:
  *
- * <pre>curl -X POST localhost:3100/api/ingest -H "x-api-key: dev-key" -d @build/wire/&lt;id&gt;.json</pre>
+ * <pre>curl -X POST localhost:3100/api/ingest -H "Authorization: Bearer &lt;device-token&gt;" -d @build/wire/&lt;id&gt;.json</pre>
  */
 class WireFormatTest {
 
