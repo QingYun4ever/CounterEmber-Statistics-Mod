@@ -23,6 +23,8 @@ public final class CeStatsConfig {
     public boolean enabled = true;
     public boolean uploadEnabled = true;
     public boolean notifyOnMatchEnd = true;
+    /** Automatically start/finish a Flashback replay around parsed matches when Flashback exists. */
+    public boolean flashbackAutoRecord = false;
 
     /** Where /api/ingest lives. */
     public String apiBaseUrl = DEFAULT_BASE_URL;

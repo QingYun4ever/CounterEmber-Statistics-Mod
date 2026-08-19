@@ -3,8 +3,8 @@ package com.cestats.ping;
 /**
  * Classifies middle-clicks without depending on Minecraft client state.
  *
- * <p>The first click is held briefly so a quick second click can replace it with a warning ping.
- * This prevents a double-click from showing an ordinary ping followed by a warning ping.</p>
+ * <p>The first click is remembered briefly so a quick second click can upgrade the current local
+ * marker to a warning ping.</p>
  */
 public final class PingClickDetector {
 

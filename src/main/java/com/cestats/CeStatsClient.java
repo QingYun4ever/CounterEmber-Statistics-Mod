@@ -6,6 +6,7 @@ import com.cestats.model.MatchRecord;
 import com.cestats.net.MatchJson;
 import com.cestats.net.MatchStore;
 import com.cestats.net.Uploader;
+import com.cestats.ping.PingDemo;
 import com.cestats.ui.ChatNotifier;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -43,6 +44,7 @@ public final class CeStatsClient implements ClientModInitializer {
                 notifier.uploadResult(result.matchId(), result.ok(), result.message()));
         tracker = new MatchTracker(CeStatsClient::onMatchFinished);
         uploader.start();
+        PingDemo.register();
 
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
             if (overlay || !config.enabled) {
@@ -61,6 +63,7 @@ public final class CeStatsClient implements ClientModInitializer {
             String user = client.getSession().getUsername();
             tracker.setContext(server, user);
             tracker.reset();
+            PingDemo.reset();
             LOG.info("[cestats] 已连接 {}，本地玩家 {}", server, user);
         });
 

@@ -36,6 +36,7 @@ public final class MatchTracker {
     public static final long CONTEXT_GAP_MS = 10L * 60L * 1000L;
 
     private final Consumer<MatchRecord> onMatch;
+    private final Consumer<ChatEvent> onEvent;
 
     private String server = "unknown";
     private String uploader = "unknown";
@@ -50,7 +51,18 @@ public final class MatchTracker {
     private long pendingTs;
 
     public MatchTracker(Consumer<MatchRecord> onMatch) {
+        this(onMatch, ignored -> {
+        });
+    }
+
+    /**
+     * Creates a tracker with an optional observer for parsed lifecycle events. The observer is
+     * deliberately separate from {@code onMatch}: integrations such as replay recording can react
+     * to room/combat boundaries without changing the match data model.
+     */
+    public MatchTracker(Consumer<MatchRecord> onMatch, Consumer<ChatEvent> onEvent) {
         this.onMatch = onMatch;
+        this.onEvent = onEvent;
     }
 
     public void setContext(String server, String uploader) {
@@ -69,6 +81,7 @@ public final class MatchTracker {
         if (event == null) {
             return;
         }
+        onEvent.accept(event);
 
         boolean combat = event instanceof ChatEvent.Kill || event instanceof ChatEvent.Death
                 || event instanceof ChatEvent.Bomb || event instanceof ChatEvent.RoundEnd;

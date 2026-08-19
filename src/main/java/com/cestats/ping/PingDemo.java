@@ -1,8 +1,8 @@
 package com.cestats.ping;
 
 import com.cestats.compat.ParticleCompat;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.hud.InGameHud;
 import net.minecraft.client.world.ClientWorld;
@@ -33,6 +33,7 @@ public final class PingDemo {
 
     private static final PingClickDetector CLICK_DETECTOR = new PingClickDetector();
     private static LocalPing activePing;
+    private static Vec3d pendingPosition;
     private static long lastTickAt;
 
     private PingDemo() {
@@ -48,6 +49,7 @@ public final class PingDemo {
     private static void onClientTick(MinecraftClient client) {
         long now = System.currentTimeMillis();
         lastTickAt = now;
+        commitExpiredNormal(now);
 
         // This is the default middle-mouse action. It follows the player's existing Minecraft
         // keybind for the demo; a future standalone version can expose a dedicated physical mouse
@@ -57,10 +59,6 @@ public final class PingDemo {
                 continue;
             }
             placeFromCrosshair(client, now);
-        }
-
-        if (CLICK_DETECTOR.isPendingExpired(now)) {
-            CLICK_DETECTOR.commitPending();
         }
 
         if (activePing == null) {
@@ -77,7 +75,6 @@ public final class PingDemo {
     private static void placeFromCrosshair(MinecraftClient client, long now) {
         HitResult target = client.crosshairTarget;
         if (target == null || target.getType() == HitResult.Type.MISS) {
-            CLICK_DETECTOR.reset();
             showOverlay(client, Text.literal("标点失败：准星没有目标").formatted(Formatting.GRAY));
             return;
         }
@@ -85,10 +82,12 @@ public final class PingDemo {
         Vec3d position = target.getPos().add(0.0, 0.06, 0.0);
         PingClickDetector.ClickResult click = CLICK_DETECTOR.registerClick(now);
         if (click == PingClickDetector.ClickResult.WARNING) {
+            pendingPosition = null;
             activePing = new LocalPing(position, PingKind.WARNING, now,
                     now + WARNING_LIFETIME_MS);
             showOverlay(client, Text.literal("⚠ 警告标点").formatted(Formatting.RED));
         } else {
+            pendingPosition = position;
             activePing = new LocalPing(position, PingKind.NORMAL, now,
                     now + NORMAL_LIFETIME_MS);
             showOverlay(client, Text.literal("◎ 标点").formatted(Formatting.AQUA));
@@ -140,8 +139,20 @@ public final class PingDemo {
         }
     }
 
+    private static void commitExpiredNormal(long now) {
+        if (!CLICK_DETECTOR.isPendingExpired(now)) {
+            return;
+        }
+
+        CLICK_DETECTOR.commitPending();
+        // The normal ping was already shown immediately; only the detector remains pending so a
+        // second click can upgrade that marker to a warning.
+        pendingPosition = null;
+    }
+
     public static void reset() {
         activePing = null;
+        pendingPosition = null;
         lastTickAt = 0L;
         CLICK_DETECTOR.reset();
     }
