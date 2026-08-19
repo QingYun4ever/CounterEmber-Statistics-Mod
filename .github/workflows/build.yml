@@ -1,0 +1,73 @@
+name: Build mod
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build all Minecraft targets
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare Gradle wrapper
+        run: chmod +x ./gradlew ./build-all.sh
+
+      # gradle.properties contains a Windows-only local JDK override. The runner already
+      # provides the required JDK through setup-java, so do not use that path in CI.
+      - name: Remove local JDK override
+        run: sed -i '/^[[:space:]]*org.gradle.java.home[[:space:]]*=/d' gradle.properties
+
+      - name: Build and test all targets
+        run: ./build-all.sh
+
+      - name: Verify one runtime jar per target
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          for version in 1.21.4 1.21.8 1.21.11; do
+            jars=("dist/cestats-mc${version}-"*.jar)
+            runtime_jars=()
+            for jar in "${jars[@]}"; do
+              [[ "$jar" == *-sources.jar ]] || runtime_jars+=("$jar")
+            done
+
+            if [[ "${#runtime_jars[@]}" -ne 1 ]]; then
+              printf 'Expected exactly one runtime jar for Minecraft %s, found %s:\n' \
+                "$version" "${#runtime_jars[@]}" >&2
+              printf '  %s\n' "${jars[@]}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload mod jars
+        uses: actions/upload-artifact@v4
+        with:
+          name: cestats-mod-jars
+          path: |
+            dist/*.jar
+            !dist/*-sources.jar
+          if-no-files-found: error
+          retention-days: 14
