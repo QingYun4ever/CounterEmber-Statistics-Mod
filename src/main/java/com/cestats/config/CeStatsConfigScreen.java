@@ -36,6 +36,8 @@ public final class CeStatsConfigScreen {
                     if (CeStatsClient.recordingController() != null) {
                         CeStatsClient.recordingController().setEnabled(
                                 config.enabled && config.flashbackAutoRecord);
+                        CeStatsClient.recordingController().setMarkKills(
+                                config.enabled && config.flashbackMarkEvents);
                     }
                     PingDemo.reset();
                 });
@@ -92,6 +94,14 @@ public final class CeStatsConfigScreen {
                 .setDefaultValue(false)
                 .setTooltip(Text.literal("安装 Flashback 后，按 CE Stats 识别的比赛边界自动开始和结束录制；需在 Flashback 中开启 Quick Save"))
                 .setSaveConsumer(value -> config.flashbackAutoRecord = value)
+                .build());
+        general.addEntry(entries.startBooleanToggle(Text.literal("Flashback 事件打点"), config.flashbackMarkEvents)
+                .setDefaultValue(false)
+                .setTooltip(Text.literal("给每次击杀、死亡、下包和回合结束在 replay 时间轴上打一个标记，编辑器里用上/下方向键即可逐个跳转"),
+                        Text.literal("凶手为反恐精英时标蓝，恐怖分子标黄；悬停标记显示「凶手 [武器] 受害者」"),
+                        Text.literal("不需要开启上面的自动录制：手动开始的录制同样会打点"),
+                        Text.literal("标记落在聊天播报到达的那一刻，比实际击杀晚约一个网络延迟"))
+                .setSaveConsumer(value -> config.flashbackMarkEvents = value)
                 .build());
 
         ConfigCategory server = builder.getOrCreateCategory(Text.literal("服务器"));

@@ -51,6 +51,17 @@ public final class CeStatsConfig {
     public transient String pingTeamCode;
     /** Automatically start/finish a Flashback replay around parsed matches when Flashback exists. */
     public boolean flashbackAutoRecord = false;
+    /**
+     * Add a Flashback timeline marker per kill, death, bomb plant and round end, so the replay
+     * editor's up/down keys jump between them.
+     *
+     * <p>Off by default, and independent of {@link #flashbackAutoRecord}: a marker only annotates a
+     * recording that is already running, so this also marks a recording the user started by hand.
+     * Flashback keys markers by its own written-tick counter and offers no way to backdate one, so
+     * each marker lands where the recorder is writing when the chat line arrives — roughly one
+     * network round trip after the event itself.</p>
+     */
+    public boolean flashbackMarkEvents = false;
 
     /** Where /api/ingest and /api/pair live. */
     public String apiBaseUrl = DEFAULT_BASE_URL;

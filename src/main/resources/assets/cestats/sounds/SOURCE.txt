@@ -1,0 +1,15 @@
+CE Stats ping sounds
+====================
+
+Source pack: Interface SFX Pack 1 by ObsydianX
+Source URL: https://obsydianx.itch.io/interface-sfx-pack-1
+License: Creative Commons Zero v1.0 Universal (CC0-1.0)
+License URL: https://creativecommons.org/publicdomain/zero/1.0/
+
+normal.ogg
+- Source file: Ogg/Cursor_tones/cursor_style_5.ogg
+- Modified: trailing silence trimmed, short fade-out, converted to mono Ogg Vorbis.
+
+warning.ogg
+- Source file: Ogg/Error_tones/style2/error_style_2_001.ogg
+- Modified: trailing silence trimmed, short fade-out, converted to mono Ogg Vorbis.

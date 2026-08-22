@@ -1,5 +1,6 @@
 package com.cestats.integration;
 
+import com.cestats.model.Side;
 import com.cestats.parse.ChatEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,16 +18,28 @@ public final class MatchRecordingController {
     private static final Logger LOG = LoggerFactory.getLogger("cestats/recording");
     private static final int MAX_START_ATTEMPTS = 100;
 
+    /** Marker colours, {@code 0xRRGGBB}: the killer's side decides, so a feed reads at a glance. */
+    private static final int COLOUR_CT = 0x4FA3FF;
+    private static final int COLOUR_T = 0xFFC24F;
+    /** Deaths with no killer, and round/bomb boundaries, which belong to neither side. */
+    private static final int COLOUR_NEUTRAL = 0xAAAAAA;
+
     private final RecordingGateway gateway;
     private boolean enabled;
+    private boolean markKills;
     private boolean matchActive;
     private boolean startPending;
     private int startAttemptsRemaining;
     private boolean ownedRecording;
 
     public MatchRecordingController(RecordingGateway gateway, boolean enabled) {
+        this(gateway, enabled, false);
+    }
+
+    public MatchRecordingController(RecordingGateway gateway, boolean enabled, boolean markKills) {
         this.gateway = gateway;
         this.enabled = enabled;
+        this.markKills = markKills;
     }
 
     /** Enables or disables automatic recording without affecting a user-owned recording. */
@@ -39,14 +52,35 @@ public final class MatchRecordingController {
         this.enabled = enabled;
     }
 
+    /**
+     * Toggles kill markers on the replay timeline. Independent of {@link #setEnabled}: marking only
+     * adds bookmarks to whatever is already being recorded, so it is safe while a recording the user
+     * started themselves is running.
+     */
+    public void setMarkKills(boolean markKills) {
+        this.markKills = markKills;
+    }
+
     /** Receives the same parsed events that drive {@code MatchTracker}. */
     public void accept(ChatEvent event) {
         switch (event) {
             case ChatEvent.ContextReset reset -> onContextReset(reset.why());
-            case ChatEvent.Kill ignored -> onCombat();
-            case ChatEvent.Death ignored -> onCombat();
-            case ChatEvent.Bomb ignored -> onCombat();
-            case ChatEvent.RoundEnd ignored -> onCombat();
+            case ChatEvent.Kill kill -> {
+                onCombat();
+                mark(describeKill(kill), colourOf(kill.killerSide()));
+            }
+            case ChatEvent.Death death -> {
+                onCombat();
+                mark(death.victim() + " 死亡", COLOUR_NEUTRAL);
+            }
+            case ChatEvent.Bomb bomb -> {
+                onCombat();
+                mark("安放炸弹 " + bomb.site(), COLOUR_NEUTRAL);
+            }
+            case ChatEvent.RoundEnd end -> {
+                onCombat();
+                mark("回合结束：" + end.winner().teamName() + " " + end.reason(), COLOUR_NEUTRAL);
+            }
             case ChatEvent.Result ignored -> finishOwned("比赛结果");
             case ChatEvent.Stats ignored -> {
                 // The result line normally follows this table. Keep recording through the table so
@@ -90,6 +124,11 @@ public final class MatchRecordingController {
         return gateway.isAvailable();
     }
 
+    /** Whether Flashback exposed a marker entry point on this client. */
+    public boolean supportsMarks() {
+        return gateway.supportsMarks();
+    }
+
     public boolean ownsRecording() {
         return ownedRecording;
     }
@@ -113,6 +152,29 @@ public final class MatchRecordingController {
             matchActive = true;
         }
         requestStart("第一条战斗事件");
+    }
+
+    /**
+     * Marks the timeline whenever something is recording, including a recording the user started.
+     * Ownership only governs start/finish; a marker adds no state the user has to clean up, and
+     * refusing to mark a manually started recording would be the surprising behaviour.
+     */
+    private void mark(String description, int colour) {
+        if (!markKills || !gateway.isRecording()) {
+            return;
+        }
+        gateway.mark(description, colour);
+    }
+
+    private static String describeKill(ChatEvent.Kill kill) {
+        return kill.killer() + " [" + kill.weapon() + "] " + kill.victim();
+    }
+
+    private static int colourOf(Side side) {
+        if (side == null) {
+            return COLOUR_NEUTRAL;
+        }
+        return side == Side.CT ? COLOUR_CT : COLOUR_T;
     }
 
     private void requestStart(String boundary) {

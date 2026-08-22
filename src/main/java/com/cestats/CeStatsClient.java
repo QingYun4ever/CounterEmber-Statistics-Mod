@@ -46,7 +46,8 @@ public final class CeStatsClient implements ClientModInitializer {
         uploader = new Uploader(config, store, result ->
                 notifier.uploadResult(result.matchId(), result.ok(), result.message()));
         recordingController = new MatchRecordingController(new FlashbackBridge(),
-                config.enabled && config.flashbackAutoRecord);
+                config.enabled && config.flashbackAutoRecord,
+                config.enabled && config.flashbackMarkEvents);
         tracker = new MatchTracker(CeStatsClient::onMatchFinished, event -> {
             recordingController.accept(event);
             PingDemo.accept(event);
@@ -84,6 +85,7 @@ public final class CeStatsClient implements ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             recordingController.setEnabled(config.enabled && config.flashbackAutoRecord);
+            recordingController.setMarkKills(config.enabled && config.flashbackMarkEvents);
             recordingController.tick();
             tracker.tick(System.currentTimeMillis());
             notifier.flush(client);

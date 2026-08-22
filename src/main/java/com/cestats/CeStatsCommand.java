@@ -2,6 +2,7 @@ package com.cestats;
 
 import com.cestats.compat.TextCompat;
 import com.cestats.config.CeStatsConfig;
+import com.cestats.integration.MatchRecordingController;
 import com.cestats.net.BindClient;
 import com.cestats.net.PairingClient;
 import com.cestats.ping.PingDemo;
@@ -30,6 +31,7 @@ public final class CeStatsCommand {
                         .then(ClientCommandManager.literal("status").executes(CeStatsCommand::status))
                         .then(ClientCommandManager.literal("toggle").executes(CeStatsCommand::toggle))
                         .then(ClientCommandManager.literal("record").executes(CeStatsCommand::toggleRecording))
+                        .then(ClientCommandManager.literal("mark").executes(CeStatsCommand::toggleMarking))
                         .then(ClientCommandManager.literal("retry").executes(CeStatsCommand::retry))
                         .then(ClientCommandManager.literal("open").executes(ctx ->
                                 openUrl(ctx, CeStatsClient.config().webBaseUrl)))
@@ -69,9 +71,15 @@ public final class CeStatsCommand {
         source.sendFeedback(row("状态", config.enabled ? "开启" : "关闭"));
         source.sendFeedback(row("上传", config.uploadEnabled ? "开启" : "关闭"));
         source.sendFeedback(row("Flashback录制", config.flashbackAutoRecord ? "开启" : "关闭"));
-        if (CeStatsClient.recordingController() != null && config.flashbackAutoRecord) {
+        source.sendFeedback(row("Flashback打点", config.flashbackMarkEvents ? "开启" : "关闭"));
+        if (CeStatsClient.recordingController() != null
+                && (config.flashbackAutoRecord || config.flashbackMarkEvents)) {
             source.sendFeedback(row("Flashback", CeStatsClient.recordingController().isAvailable()
                     ? "已检测" : "未安装或接口不兼容"));
+            if (config.flashbackMarkEvents && CeStatsClient.recordingController().isAvailable()
+                    && !CeStatsClient.recordingController().supportsMarks()) {
+                source.sendFeedback(row("打点接口", "此 Flashback 版本不支持，已停用打点"));
+            }
         }
         source.sendFeedback(row("接口", config.ingestUrl()));
         source.sendFeedback(row("上传身份", config.isPaired()
@@ -94,6 +102,8 @@ public final class CeStatsCommand {
         if (CeStatsClient.recordingController() != null) {
             CeStatsClient.recordingController().setEnabled(
                     config.enabled && config.flashbackAutoRecord);
+            CeStatsClient.recordingController().setMarkKills(
+                    config.enabled && config.flashbackMarkEvents);
         }
         ctx.getSource().sendFeedback(head(config.enabled ? "已开启统计" : "已关闭统计"));
         return 1;
@@ -109,6 +119,23 @@ public final class CeStatsCommand {
         }
         ctx.getSource().sendFeedback(head(config.flashbackAutoRecord
                 ? "已开启 Flashback 自动录制" : "已关闭 Flashback 自动录制"));
+        return 1;
+    }
+
+    private static int toggleMarking(CommandContext<FabricClientCommandSource> ctx) {
+        CeStatsConfig config = CeStatsClient.config();
+        config.flashbackMarkEvents = !config.flashbackMarkEvents;
+        config.save();
+        MatchRecordingController controller = CeStatsClient.recordingController();
+        if (controller != null) {
+            controller.setMarkKills(config.enabled && config.flashbackMarkEvents);
+        }
+        ctx.getSource().sendFeedback(head(config.flashbackMarkEvents
+                ? "已开启 Flashback 事件打点" : "已关闭 Flashback 事件打点"));
+        if (config.flashbackMarkEvents && controller != null && controller.isAvailable()
+                && !controller.supportsMarks()) {
+            ctx.getSource().sendFeedback(row("打点接口", "此 Flashback 版本不支持，不会打点"));
+        }
         return 1;
     }
 

@@ -1,0 +1,20 @@
+{
+  "ping.normal": {
+    "subtitle": "subtitles.cestats.ping.normal",
+    "sounds": [
+      {
+        "name": "cestats:ping/normal",
+        "volume": 1.0
+      }
+    ]
+  },
+  "ping.warning": {
+    "subtitle": "subtitles.cestats.ping.warning",
+    "sounds": [
+      {
+        "name": "cestats:ping/warning",
+        "volume": 1.0
+      }
+    ]
+  }
+}

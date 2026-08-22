@@ -165,6 +165,7 @@ public final class PingDemo {
                 ACTIVE_PINGS.set(ACTIVE_PINGS.size() - 1, warning);
                 publish(warning);
                 POLICY.acceptWarning(now);
+                PingSoundPlayer.play(client, PingKind.WARNING);
                 showOverlay(client, Text.literal("⚠ 警告标点").formatted(Formatting.RED));
             } else {
                 CLICK_DETECTOR.reset();
@@ -196,6 +197,7 @@ public final class PingDemo {
                 now + NORMAL_LIFETIME_MS);
         ACTIVE_PINGS.add(ping);
         publish(ping);
+        PingSoundPlayer.play(client, PingKind.NORMAL);
         showOverlay(client, Text.literal("◎ 标点").formatted(Formatting.AQUA));
     }
 
@@ -295,6 +297,7 @@ public final class PingDemo {
                     new Vec3d(marker.x(), marker.y(), marker.z()), kind,
                     Math.min(marker.createdAt(), now), expiresAt));
             if (previous == null || previous.kind() != kind) {
+                PingSoundPlayer.play(client, kind);
                 debugLocal("收到队友标点" + (kind == PingKind.WARNING ? "（警告）" : "")
                         + " " + String.format(Locale.ROOT, "%.0f %.0f %.0f",
                         marker.x(), marker.y(), marker.z())
