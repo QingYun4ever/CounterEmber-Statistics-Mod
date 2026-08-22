@@ -61,7 +61,7 @@ public final class CeStatsConfigScreen {
 
         // Built first and kept, so the three ping sub-options below can be greyed out while the
         // feature is off — a switch that does nothing is worse than a switch that looks disabled.
-        BooleanListEntry pingMarker = entries.startBooleanToggle(Text.literal("标点功能"),
+        BooleanListEntry pingMarker = entries.startBooleanToggle(Text.literal("中键标点"),
                         config.pingMarkerEnabled)
                 .setDefaultValue(false)
                 .setTooltip(Text.literal("中键（原版“选取方块”键）标点，发光菱形穿墙可见"),

@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PingDefaultsTest {
 
     @Test
-    @DisplayName("标点功能默认关闭")
+    @DisplayName("中键标点默认关闭")
     void markersAreOffByDefault() {
         assertFalse(new CeStatsConfig().pingMarkerEnabled);
     }
@@ -30,7 +30,7 @@ class PingDefaultsTest {
     }
 
     @Test
-    @DisplayName("开启标点功能后中继才被允许，且仍受统计总开关约束")
+    @DisplayName("开启中键标点后中继才被允许，且仍受统计总开关约束")
     void enablingTheFeatureIsWhatLetsTheRelayRun() {
         CeStatsConfig config = new CeStatsConfig();
         config.pingMarkerEnabled = true;

@@ -117,8 +117,8 @@ public final class CeStatsCommand {
         if (!CeStatsClient.config().pingMarkerEnabled) {
             // Nothing below this is meaningful with the feature off, and the one thing the player
             // needs is where the switch lives.
-            source.sendFeedback(head("标点功能已关闭"));
-            source.sendFeedback(row("开启方式", "Mod Menu → CE Stats → 常规 → 标点功能"));
+            source.sendFeedback(head("中键标点已关闭"));
+            source.sendFeedback(row("开启方式", "Mod Menu → CE Stats → 常规 → 中键标点"));
             source.sendFeedback(row("说明", "开启后中键（原版“选取方块”键）标点，队伍同步另有开关"));
             return 1;
         }
@@ -161,7 +161,7 @@ public final class CeStatsCommand {
                 ? "已开启标点调试输出：每次标点都会在聊天里显示是否同步成功"
                 : "已关闭标点调试输出"));
         if (config.pingDebug && !config.pingMarkerEnabled) {
-            ctx.getSource().sendFeedback(row("提示", "标点功能当前关闭，需要先在 Mod Menu 里开启才会有输出"));
+            ctx.getSource().sendFeedback(row("提示", "中键标点当前关闭，需要先在 Mod Menu 里开启才会有输出"));
         }
         return 1;
     }
@@ -195,6 +195,11 @@ public final class CeStatsCommand {
     }
 
     private static String pingStatusText() {
+        if (!CeStatsClient.config().pingMarkerEnabled) {
+            // Distinct from a relay that is switched off: here there is nothing to sync in the first
+            // place, and the switch is in a different screen.
+            return "中键标点已关闭（Mod Menu → 常规 → 中键标点）";
+        }
         PingRelayClient.Status status = PingDemo.relayStatus();
         if (status == null) {
             return CeStatsClient.config().pingEnabled ? "已开启" : "已关闭";
